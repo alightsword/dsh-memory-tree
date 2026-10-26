@@ -11,6 +11,9 @@
  *   - wrap registration in `slots.inject(ownerKey, () => slots.register(...))`;
  *   - manage lifecycle with `ctx.effect(...)`;
  *   - the settings page slot is `settings.section`.
+ *
+ * Data flows over the host webServer: GET /dsh-memory-tree-api returns the
+ * current memory state as JSON (the browser cannot read the filesystem).
  */
 
 declare const React: any
@@ -20,11 +23,16 @@ export const inject = ['slots']
 const PANEL_STYLE =
   '.mt-panel{display:flex;flex-direction:column;gap:10px;padding:4px 0;font-size:13px;color:var(--dsw-alias-label-primary)}' +
   '.mt-panel .row{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}' +
-  '.mt-panel .label{color:var(--dsw-alias-label-secondary)}'
+  '.mt-panel .label{color:var(--dsw-alias-label-secondary)}' +
+  '.mt-panel .err{color:var(--dsw-alias-status-danger, #d33)}' +
+  '.mt-panel .refresh{align-self:flex-start;border:1px solid var(--dsw-alias-border-l1);background:transparent;color:inherit;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px}' +
+  '.mt-panel .refresh:hover{background:var(--dsw-alias-bg-layer-2)}'
 
-type SettingsCardData = {
+type ApiPayload = {
+  ok: boolean
+  error?: string
   persona: { complete: boolean; mode: string }
-  log: Array<{ ts: number; event: string; detail?: unknown }>
+  log: Array<{ ts: number; event: string }>
   memory: {
     active_rules: number
     active_facts: number
@@ -41,34 +49,66 @@ type SettingsCardData = {
   }
 }
 
-function Panel(props: { data?: SettingsCardData }) {
-  const data = props.data
-  if (!data) {
-    return React.createElement(
-      'div',
-      { className: 'mt-panel' },
-      React.createElement('div', { className: 'row' }, '暂无记忆数据'),
-    )
-  }
-  const rows = [
-    ['complete 模式', data.persona.complete ? '是' : '否'],
-    ['注入通道', data.persona.mode],
-    ['active rules', String(data.memory.active_rules)],
-    ['active facts', String(data.memory.active_facts)],
-    ['pending conflicts', String(data.memory.pending_conflicts)],
-    ['forgetting_tier', data.config.forgetting_tier],
-    ['recall_top_k', String(data.config.recall_top_k)],
-  ]
+const API_PATH = '/dsh-memory-tree-api'
+
+function Panel() {
+  const [data, setData] = React.useState<ApiPayload | null>(null)
+  const [error, setError] = React.useState('')
+  const [tick, setTick] = React.useState(0)
+
+  React.useEffect(() => {
+    let alive = true
+    fetch(API_PATH, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j) => {
+        if (!alive) return
+        if (j?.ok) {
+          setData(j)
+          setError('')
+        } else {
+          setError(String(j?.error ?? 'unknown error'))
+        }
+      })
+      .catch((e) => {
+        if (alive) setError(String(e?.message ?? e))
+      })
+    return () => {
+      alive = false
+    }
+  }, [tick])
+
+  const rows: Array<[string, string]> = data
+    ? [
+        ['complete 模式', data.persona.complete ? '是' : '否'],
+        ['注入通道', data.persona.mode],
+        ['active rules', String(data.memory.active_rules)],
+        ['active facts', String(data.memory.active_facts)],
+        ['superseded', String(data.memory.superseded)],
+        ['L2 buffer', String(data.memory.buffer_count)],
+        ['pending conflicts', String(data.memory.pending_conflicts)],
+        ['forgetting_tier', data.config.forgetting_tier],
+        ['recall_top_k', String(data.config.recall_top_k)],
+        ['logging_enabled', String(data.config.logging_enabled)],
+      ]
+    : []
+
   return React.createElement(
     'div',
     { className: 'mt-panel' },
-    rows.map(([label, value]) =>
-      React.createElement(
-        'div',
-        { className: 'row', key: label },
-        React.createElement('span', { className: 'label' }, label),
-        React.createElement('span', null, value),
-      ),
+    error
+      ? React.createElement('div', { className: 'err' }, '加载失败: ' + error)
+      : rows.map(([label, value]) =>
+          React.createElement(
+            'div',
+            { className: 'row', key: label },
+            React.createElement('span', { className: 'label' }, label),
+            React.createElement('span', null, value),
+          ),
+        ),
+    React.createElement(
+      'button',
+      { className: 'refresh', onClick: () => setTick((t: number) => t + 1) },
+      '刷新',
     ),
   )
 }

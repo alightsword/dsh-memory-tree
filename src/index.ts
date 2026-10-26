@@ -26,7 +26,7 @@ import { memoryShowTool } from './tools/memory_show.js'
 
 export const name = 'dsh-memory-tree'
 
-export const inject = ['tools', 'systemPrompt', 'agents']
+export const inject = ['tools', 'systemPrompt', 'agents', 'webServer']
 
 /**
  * The persona PREFIX section carries `complete: true` when the deployment runs
@@ -221,6 +221,55 @@ export function apply(ctx: Context, rawConfig?: MemoryTreeConfig) {
     )
     return () => {}
   })
+
+  // --- settings API for the client panel -----------------------------------
+  // The client half (browser) cannot read the filesystem; expose the memory
+  // state over the host webServer (same pattern as dsh-meme's /dsh-memes-api).
+  const webServer = (ctx as any).webServer ?? (ctx as any).get?.('webServer')
+  if (webServer?.register) {
+    ctx.effect(
+      () =>
+        webServer.register({
+          kind: 'exact',
+          path: '/dsh-memory-tree-api',
+          async handler(_req: any, res: any) {
+            const json = (obj: unknown, status = 200) => {
+              res.writeHead(status, {
+                'Content-Type': 'application/json; charset=utf-8',
+                'Cache-Control': 'no-store',
+              })
+              res.end(JSON.stringify(obj))
+            }
+            try {
+              const nodes = await store.readL3Nodes()
+              const buffer = await store.readBuffer()
+              const pending = await store.readPending()
+              const stale = await store.isSnapshotStale()
+              json({
+                ok: true,
+                persona: {
+                  complete: snapshotDeps.isCompleteMode(),
+                  mode: stale ? 'recall-only (snapshot stale)' : 'snapshot + recall',
+                },
+                log: await store.readDecisionLogTail(30),
+                memory: {
+                  active_rules: nodes.filter((n) => n.status === 'active' && n.type === 'rule').length,
+                  active_facts: nodes.filter((n) => n.status === 'active' && n.type === 'fact').length,
+                  superseded: nodes.filter((n) => n.status === 'superseded').length,
+                  buffer_count: buffer.length,
+                  pending_conflicts: (pending.conflicts ?? []).filter((c) => c.status === 'pending')
+                    .length,
+                },
+                config,
+              })
+            } catch (err: any) {
+              json({ ok: false, error: String(err?.message ?? err) }, 500)
+            }
+          },
+        }),
+      'dsh-memory-tree: /dsh-memory-tree-api',
+    )
+  }
 
   // eslint-disable-next-line no-console
   console.log('[dsh-memory-tree] plugin loaded')

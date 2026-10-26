@@ -176,6 +176,25 @@ export class MemoryStore {
     await fs.mkdir(path.dirname(this.decisionLog()), { recursive: true })
     await fs.appendFile(this.decisionLog(), JSON.stringify(entry) + '\n', 'utf-8')
   }
+
+  /** Read the last `limit` decision-log entries (oldest first). */
+  async readDecisionLogTail(limit: number): Promise<Array<{ ts: number; event: string }>> {
+    try {
+      const raw = await fs.readFile(this.decisionLog(), 'utf-8')
+      const lines = raw.split('\n').filter((l) => l.trim().length > 0)
+      return lines
+        .slice(-limit)
+        .map((l) => {
+          try {
+            return JSON.parse(l) as { ts: number; event: string }
+          } catch {
+            return { ts: 0, event: l.slice(0, 120) }
+          }
+        })
+    } catch {
+      return []
+    }
+  }
 }
 
 /** Resolve the base dir for memory storage. */
