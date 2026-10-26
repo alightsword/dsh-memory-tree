@@ -60,7 +60,7 @@ client 是一个**侧边栏面板**（与 feiyu-memory 同款双 slot 结构）�
 | 写回用 `agent/turn-stopping`，不是 disposed | ✅ 采纳 |
 | `source.kind: 'plugin:hindsight'`，V4 producer-owned kind | ✅ 采纳，改为 `plugin:dsh-memory-tree` + `form` |
 | **完全不 import dsh 包**，用 `toDshParameters` 自拼 schema、结构类型 | ❌ 未采纳：保留 `@deepseek-ai/dsh-tools`（与 `dsh` 同步锁定），换取 `defineTool` 的类型安全与参数校验。这是已知权衡，若未来 dsh 版本再漂移，可退回到 Hindsight 的零依赖方案 |
-| `inject: ['agents']` + `ctx.inject(['tools'], ...)` | 部分采纳：`inject` 保留 `['tools','systemPrompt','agents']`，诚实声明依赖；工具仍走 `ctx.tools.register` |
+| `inject: ['agents']` + `ctx.inject(['tools'], ...)` | 部分采纳：`inject` 保留 `['tools','systemPrompt','agents','webServer']`，诚实声明依赖；工具仍走 `ctx.tools.register` |
 
 ## 为什么是插件而不是 Skill
 
@@ -88,21 +88,22 @@ Skill 是文本指令，模型可以绕开。写入前拦截必须落在**工具
 dsh-memory-tree/
 ├── package.json              # 声明 dsh.bundle + dsh.client，exports['./client']
 ├── src/
-│   ├── index.ts              # apply(ctx, config)，注册钩子与工具
-│   ├── lifecycle.ts          # session/created、session/flush、session/disposed、agent/pre-step
+│   ├── index.ts              # apply(ctx, config)，注册钩子/工具/webServer API
+│   ├── config-schema.ts      # schemastery Config schema（设置页表单）
+│   ├── lifecycle.ts          # agent/created、turn-stopping、pre-step
 │   ├── snapshot.ts           # 冻结快照构建 + 注入 + complete 检测
 │   ├── recall.ts             # pre-step 召回 + 冲突 reminder
 │   ├── conflict.ts           # scope 重叠 + 语义相反检测，写入路径拦截
 │   ├── forgetting.ts         # 幂律衰减 + 归档，fail-open
 │   ├── store.ts              # 文件系统持久化层
 │   ├── types.ts              # 共享类型 + 默认配置
+│   ├── client/index.tsx      # 侧边栏面板（分层视图 + 日志 + 自录入/编辑/删除）
 │   └── tools/
 │       ├── memory_add.ts
 │       ├── memory_replace.ts
 │       ├── memory_recall.ts
 │       ├── memory_show.ts
 │       └── memory_resolve.ts
-└── src/client/index.tsx      # 侧边栏面板（分层视图 + 日志 + 删除）
 ```
 
 ## 工具清单

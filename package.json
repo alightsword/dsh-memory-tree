@@ -28,12 +28,7 @@
       "patch": "./cordis.patch.yml"
     },
     "client": {
-      "platform": "web",
-      "inject": [
-        "@deepseek-ai/dsh-client-ui-settings"
-      ],
-      "external": [],
-      "immediately": false
+      "platform": "web"
     }
   },
   "exports": {
