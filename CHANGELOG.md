@@ -2,6 +2,17 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.2.1] - 2026-10-26
+
+### 新增
+
+- **面板可视化改造**（参考 feiyu-memory）：概览行「本地存储 · N 条 · 认识 N 天」；L3 记忆卡片流（相对时间 + scope 标签 + 已确认标记）；相对时间显示（刚刚/N 分钟前/昨天/N 天前）。
+- **用户自录入**：面板内手动记一条（statement + 类型 + 可选 scope），写入 L3 并标记 confirmed。
+- **行内编辑**：每张卡片可「改」statement，保存后快照标 stale。
+- **二段确认删除**：点「忘掉」→「确定忘掉？忘掉 / 算了」行内确认，不弹窗。
+- host 新端点：`POST /note`（自录入）、`POST /edit`（编辑）；state 端点补充 `first_seen`。
+- e2e 补 panel API 全链路断言（note/edit/forget/state），52 → 69 条。
+
 ## [0.2.0] - 2026-10-26
 
 ### 新增

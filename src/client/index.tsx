@@ -1,21 +1,20 @@
 /**
- * dsh-memory-tree client half — sidebar panel.
+ * dsh-memory-tree client half — sidebar panel (feiyu-memory style).
  *
- * A sidebar panel (same two-slot pattern as feiyu-memory) that shows the
- * plugin's three-tier memory — L1 transient / L2 short-term / L3 long-term —
- * plus the agent's decision log, with a delete action. The layered view is
- * the plugin's core identity, so it is surfaced here, not flattened.
+ * Two-slot sidebar panel (sidebar.panellist + main) showing the plugin's
+ * three-tier memory. Visual language follows feiyu-memory:
+ *   - one-line overview header ("本地存储 · N 条 · 认识 N 天");
+ *   - card stream with relative timestamps, scope chips and in-place edit;
+ *   - two-step inline delete confirm (忘掉 → 确定忘掉？/ 算了), no modal;
+ *   - a manual note composer so users can add / edit memories themselves.
+ * The layered identity is kept: L3 cards are the main stream, L2 conflicts
+ * and the agent decision log render as dedicated sections below.
  *
  * Client contract (verified against feiyu-memory + dsh-meme):
  *   - export `inject` array (here `['slots']`);
  *   - access services via `ctx.get('slots')`;
- *   - register the sidebar entry on `sidebar.panellist` and the panel on
- *     `main` (their key/id must match);
+ *   - register `sidebar.panellist` + `main` (key/id must match);
  *   - React via `require('react')` from the browser module table.
- *
- * Data flows over the host webServer:
- *   GET  /dsh-memory-tree-api/state   -> layered memory + log + config
- *   POST /dsh-memory-tree-api/forget  -> delete one L3 node by id
  */
 
 declare const React: any
@@ -25,7 +24,6 @@ export const inject = ['slots']
 const PANEL_ID = 'memory-tree'
 
 const C = {
-  bg: 'var(--dsw-alias-bg-base)',
   layer1: 'var(--dsw-alias-bg-layer-1)',
   layer2: 'var(--dsw-alias-bg-layer-2)',
   border: 'var(--dsw-alias-border-l1)',
@@ -36,22 +34,34 @@ const C = {
 }
 
 const CSS = [
-  '.mtp-panel{display:flex;flex-direction:column;gap:12px;padding:8px 4px;font-size:13px;color:' + C.label + '}',
-  '.mtp-panel .mtp-err{color:' + C.danger + ';font-size:12px}',
-  '.mtp-panel .mtp-bar{display:flex;gap:8px;align-items:center}',
-  '.mtp-panel .mtp-refresh,.mtp-panel .mtp-del{border:1px solid ' + C.border + ';background:transparent;color:inherit;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:12px}',
-  '.mtp-panel .mtp-refresh:hover{background:' + C.layer2 + '}',
-  '.mtp-panel .mtp-del{color:' + C.danger + ';border-color:' + C.danger + ';opacity:.8;margin-left:auto}',
-  '.mtp-panel .mtp-section{display:flex;flex-direction:column;gap:6px}',
-  '.mtp-panel .mtp-head{font-size:12px;font-weight:600;color:' + C.label2 + ';text-transform:uppercase;letter-spacing:.04em}',
-  '.mtp-panel .mtp-node{display:flex;flex-direction:column;gap:2px;padding:6px 8px;background:' + C.layer1 + ';border:1px solid ' + C.border + ';border-radius:8px}',
-  '.mtp-panel .mtp-node .mtp-statement{color:' + C.label + ';line-height:1.4}',
-  '.mtp-panel .mtp-node .mtp-meta{display:flex;gap:8px;font-size:11px;color:' + C.label2 + '}',
-  '.mtp-panel .mtp-node .mtp-tag{padding:0 5px;border-radius:4px;background:' + C.layer2 + '}',
-  '.mtp-panel .mtp-log{display:flex;flex-direction:column;gap:3px;max-height:220px;overflow:auto}',
-  '.mtp-panel .mtp-log .mtp-logline{font-size:12px;color:' + C.label2 + ';display:flex;gap:8px;border-bottom:1px dashed ' + C.border + ';padding:2px 0}',
-  '.mtp-panel .mtp-log .mtp-logts{flex:none;opacity:.7}',
-  '.mtp-panel .mtp-empty{font-size:12px;color:' + C.label2 + ';font-style:italic}',
+  '.mtp{display:flex;flex-direction:column;gap:14px;padding:6px 2px;font-size:13px;color:' + C.label + ';line-height:1.55}',
+  '.mtp .mtp-ov{font-size:12px;color:' + C.label2 + '}',
+  '.mtp .mtp-sec{display:flex;flex-direction:column;gap:8px}',
+  '.mtp .mtp-head{font-size:13px;font-weight:600;color:' + C.label + '}',
+  '.mtp .mtp-sub{font-size:11px;font-weight:400;color:' + C.label2 + ';margin-left:6px}',
+  '.mtp .mtp-card{position:relative;display:flex;flex-direction:column;gap:4px;padding:8px 10px;background:' + C.layer1 + ';border:1px solid ' + C.border + ';border-radius:10px}',
+  '.mtp .mtp-meta{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11px;color:' + C.label2 + '}',
+  '.mtp .mtp-chip{padding:0 6px;border-radius:4px;background:' + C.layer2 + ';white-space:nowrap}',
+  '.mtp .mtp-chip.warn{color:' + C.danger + ';border:1px solid ' + C.danger + ';background:transparent}',
+  '.mtp .mtp-statement{white-space:pre-wrap;word-break:break-word}',
+  '.mtp .mtp-ops{display:flex;gap:8px;justify-content:flex-end;font-size:11px}',
+  '.mtp .mtp-link{background:none;border:none;padding:0;color:' + C.label2 + ';cursor:pointer;font-size:11px;text-decoration:underline}',
+  '.mtp .mtp-link:hover{color:' + C.label + '}',
+  '.mtp .mtp-link.danger{color:' + C.danger + '}',
+  '.mtp .mtp-confirm{display:flex;gap:10px;justify-content:flex-end;font-size:12px;color:' + C.label2 + ';margin-top:2px}',
+  '.mtp textarea.mtp-input{width:100%;box-sizing:border-box;min-height:56px;resize:vertical;background:' + C.layer1 + ';color:' + C.label + ';border:1px solid ' + C.border + ';border-radius:8px;padding:8px;font-size:13px;font-family:inherit;line-height:1.5}',
+  '.mtp textarea.mtp-input:focus{outline:none;border-color:' + C.accent + '}',
+  '.mtp .mtp-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}',
+  '.mtp .mtp-select,.mtp .mtp-scope{background:' + C.layer1 + ';color:' + C.label + ';border:1px solid ' + C.border + ';border-radius:6px;padding:3px 8px;font-size:12px}',
+  '.mtp .mtp-scope{flex:1;min-width:90px}',
+  '.mtp .mtp-add{border:1px solid ' + C.accent + ';color:' + C.accent + ';background:transparent;border-radius:6px;padding:3px 14px;cursor:pointer;font-size:12px}',
+  '.mtp .mtp-add:hover{background:' + C.layer2 + '}',
+  '.mtp .mtp-add:disabled{opacity:.5;cursor:default}',
+  '.mtp .mtp-err{color:' + C.danger + ';font-size:12px}',
+  '.mtp .mtp-empty{font-size:12px;color:' + C.label2 + ';font-style:italic}',
+  '.mtp .mtp-logline{display:flex;gap:8px;font-size:12px;color:' + C.label2 + ';border-bottom:1px dashed ' + C.border + ';padding:2px 0}',
+  '.mtp .mtp-logts{flex:none;opacity:.7}',
+  '.mtp .mtp-logbox{display:flex;flex-direction:column;gap:2px;max-height:200px;overflow:auto}',
 ].join('\n')
 
 type NodeItem = {
@@ -64,33 +74,35 @@ type NodeItem = {
   updated_at: number
 }
 
-type ConflictItem = {
-  conflict_id: string
-  question: string
-  created_at: number
-}
+type ConflictItem = { conflict_id: string; question: string; created_at: number }
 
 type StatePayload = {
   ok: boolean
   error?: string
   persona: { complete: boolean; mode: string }
+  first_seen: number
   layers: {
-    l1: { snapshot_stale: boolean; description: string }
-    l2: { buffer: Array<{ id: string; statement: string; type: string }>; pending_conflicts: ConflictItem[]; description: string }
-    l3: { nodes: NodeItem[]; description: string }
+    l1: { snapshot_stale: boolean }
+    l2: { buffer: Array<{ id: string; statement: string; type: string }>; pending_conflicts: ConflictItem[] }
+    l3: { nodes: NodeItem[] }
   }
   log: Array<{ ts: number; event: string; detail?: unknown }>
   config: Record<string, unknown>
 }
 
-const API_STATE = '/dsh-memory-tree-api/state'
-const API_FORGET = '/dsh-memory-tree-api/forget'
+const BASE = '/dsh-memory-tree-api'
 
-function fmtTime(ts: number): string {
+function relTime(ts: number): string {
   if (!ts) return ''
-  const d = new Date(ts)
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+  const diff = Date.now() - ts
+  const min = Math.floor(diff / 60000)
+  if (min < 1) return '刚刚'
+  if (min < 60) return `${min} 分钟前`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr} 小时前`
+  const day = Math.floor(hr / 24)
+  if (day === 1) return '昨天'
+  return `${day} 天前`
 }
 
 function Icon(props: any) {
@@ -99,56 +111,106 @@ function Icon(props: any) {
   return React.createElement(
     'svg',
     {
-      width: size,
-      height: size,
-      viewBox: '0 0 24 24',
-      fill: 'none',
-      role: 'img',
-      'aria-label': '记忆树',
-      style: { display: 'block', opacity: active ? 1 : 0.72 },
+      width: size, height: size, viewBox: '0 0 24 24', fill: 'none', role: 'img',
+      'aria-label': '记忆树', style: { display: 'block', opacity: active ? 1 : 0.72 },
     },
-    // three stacked tiers (L1/L2/L3) as a small tree
-    React.createElement('path', {
-      d: 'M12 3 L12 8',
-      stroke: 'currentColor',
-      strokeWidth: 1.5,
-      strokeLinecap: 'round',
-    }),
-    React.createElement('path', {
-      d: 'M12 8 L6 12 M12 8 L18 12',
-      stroke: 'currentColor',
-      strokeWidth: 1.5,
-      strokeLinecap: 'round',
-    }),
+    React.createElement('path', { d: 'M12 3 L12 8 M12 8 L6 12 M12 8 L18 12 M12 8 L12 15', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round' }),
     React.createElement('circle', { cx: 12, cy: 3, r: 1.6, fill: 'currentColor' }),
     React.createElement('circle', { cx: 6, cy: 14, r: 1.8, fill: 'currentColor' }),
     React.createElement('circle', { cx: 12, cy: 17, r: 1.8, fill: 'currentColor' }),
     React.createElement('circle', { cx: 18, cy: 14, r: 1.8, fill: 'currentColor' }),
-    React.createElement('path', {
-      d: 'M12 8 L12 15',
-      stroke: 'currentColor',
-      strokeWidth: 1.5,
-      strokeLinecap: 'round',
-    }),
+  )
+}
+
+/** One L3 card: chips + statement + (edit in place) + two-step forget. */
+function NodeCard(props: { node: NodeItem; onDone: () => void; post: (path: string, body: any) => Promise<any>; setError: (s: string) => void }) {
+  const n = props.node
+  const [confirming, setConfirming] = React.useState(false)
+  const [editing, setEditing] = React.useState(false)
+  const [draft, setDraft] = React.useState(n.statement)
+  const [busy, setBusy] = React.useState(false)
+
+  const doForget = () => {
+    setBusy(true)
+    props.post('/forget', { id: n.id }).then((j) => {
+      setBusy(false)
+      if (j?.ok) props.onDone()
+      else props.setError(String(j?.error ?? '删除失败'))
+    })
+  }
+  const saveEdit = () => {
+    const text = draft.trim()
+    if (!text || text === n.statement) return setEditing(false)
+    setBusy(true)
+    props.post('/edit', { id: n.id, statement: text }).then((j) => {
+      setBusy(false)
+      if (j?.ok) {
+        setEditing(false)
+        props.onDone()
+      } else props.setError(String(j?.error ?? '保存失败'))
+    })
+  }
+
+  return React.createElement(
+    'div',
+    { className: 'mtp-card' },
+    React.createElement(
+      'div',
+      { className: 'mtp-meta' },
+      React.createElement('span', null, relTime(n.updated_at)),
+      React.createElement('span', { className: 'mtp-chip' }, n.type === 'rule' ? '规矩' : '事实'),
+      n.scope ? React.createElement('span', { className: 'mtp-chip' }, n.scope) : null,
+      n.source === 'confirmed' ? React.createElement('span', { className: 'mtp-chip' }, '已确认') : null,
+    ),
+    editing
+      ? React.createElement('textarea', {
+          className: 'mtp-input',
+          value: draft,
+          onChange: (e: any) => setDraft(e.target.value),
+          autoFocus: true,
+        })
+      : React.createElement('div', { className: 'mtp-statement' }, n.statement),
+    confirming
+      ? React.createElement(
+          'div',
+          { className: 'mtp-confirm' },
+          '确定忘掉？',
+          React.createElement('button', { className: 'mtp-link danger', disabled: busy, onClick: doForget }, busy ? '…' : '忘掉'),
+          React.createElement('button', { className: 'mtp-link', onClick: () => setConfirming(false) }, '算了'),
+        )
+      : React.createElement(
+          'div',
+          { className: 'mtp-ops' },
+          React.createElement('button', { className: 'mtp-link', onClick: () => setEditing((v) => !v) }, editing ? '收起' : '改'),
+          React.createElement('button', { className: 'mtp-link danger', onClick: () => setConfirming(true) }, '忘掉'),
+        ),
   )
 }
 
 function Panel() {
   const [data, setData] = React.useState<StatePayload | null>(null)
   const [error, setError] = React.useState('')
-  const [busy, setBusy] = React.useState('')
   const [tick, setTick] = React.useState(0)
+  const [noteText, setNoteText] = React.useState('')
+  const [noteType, setNoteType] = React.useState('rule')
+  const [noteScope, setNoteScope] = React.useState('')
+  const [noteBusy, setNoteBusy] = React.useState(false)
+
+  const post = React.useCallback((path: string, body: any) =>
+    fetch(BASE + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then((r) => r.json()), [])
 
   const load = React.useCallback(() => {
-    fetch(API_STATE, { cache: 'no-store' })
+    fetch(BASE + '/state', { cache: 'no-store' })
       .then((r) => r.json())
       .then((j) => {
         if (j?.ok) {
           setData(j)
           setError('')
-        } else {
-          setError(String(j?.error ?? 'unknown error'))
-        }
+        } else setError(String(j?.error ?? 'unknown error'))
       })
       .catch((e) => setError(String(e?.message ?? e)))
   }, [])
@@ -157,163 +219,134 @@ function Panel() {
     load()
   }, [load, tick])
 
-  const forget = (id: string) => {
-    setBusy(id)
-    fetch(API_FORGET, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id }),
-    })
-      .then((r) => r.json())
-      .then((j) => {
-        if (j?.ok && j.removed) setTick((t) => t + 1)
-        else setError(j?.error ?? 'delete failed')
-      })
-      .catch((e) => setError(String(e?.message ?? e)))
-      .finally(() => setBusy(''))
-  }
+  const refresh = () => setTick((t) => t + 1)
 
-  if (error && !data) {
-    return React.createElement(
-      'div',
-      { className: 'mtp-panel' },
-      React.createElement('div', { className: 'mtp-err' }, '加载失败: ' + error),
-      React.createElement('button', { className: 'mtp-refresh', onClick: () => setTick((t) => t + 1) }, '重试'),
-    )
+  const addNote = () => {
+    const statement = noteText.trim()
+    if (!statement) return
+    setNoteBusy(true)
+    post('/note', { statement, type: noteType, scope: noteScope }).then((j) => {
+      setNoteBusy(false)
+      if (j?.ok) {
+        setNoteText('')
+        setNoteScope('')
+        refresh()
+      } else setError(String(j?.error ?? '添加失败'))
+    })
   }
 
   const layers = data?.layers
-  const nodes = layers?.l3.nodes ?? []
+  const nodes = [...(layers?.l3.nodes ?? [])].sort((a, b) => b.updated_at - a.updated_at)
+  const activeNodes = nodes.filter((n) => n.status === 'active')
   const buffer = layers?.l2.buffer ?? []
   const pending = layers?.l2.pending_conflicts ?? []
   const log = data?.log ?? []
 
+  // Overview: count + days known.
+  let overview = ''
+  if (data) {
+    const count = activeNodes.length
+    const days = data.first_seen ? Math.max(1, Math.ceil((Date.now() - data.first_seen) / 86400000)) : 1
+    overview = `本地存储 · ${count} 条 · 认识 ${days} 天`
+  }
+
   return React.createElement(
     'div',
-    { className: 'mtp-panel' },
+    { className: 'mtp' },
+    React.createElement('div', { className: 'mtp-ov' }, overview || (error ? '' : '加载中…')),
+
+    // --- 自录入 ---
     React.createElement(
       'div',
-      { className: 'mtp-bar' },
+      { className: 'mtp-sec' },
+      React.createElement('div', { className: 'mtp-head' }, '手动记一条'),
+      React.createElement('textarea', {
+        className: 'mtp-input',
+        placeholder: '写一条要长期记住的事，例如：我不吃香菜',
+        value: noteText,
+        onChange: (e: any) => setNoteText(e.target.value),
+      }),
       React.createElement(
-        'button',
-        { className: 'mtp-refresh', onClick: () => setTick((t) => t + 1) },
-        '刷新',
+        'div',
+        { className: 'mtp-row' },
+        React.createElement(
+          'select',
+          { className: 'mtp-select', value: noteType, onChange: (e: any) => setNoteType(e.target.value) },
+          React.createElement('option', { value: 'rule' }, '规矩'),
+          React.createElement('option', { value: 'fact' }, '事实'),
+        ),
+        React.createElement('input', {
+          className: 'mtp-scope',
+          placeholder: 'scope（可选，如 qq 群）',
+          value: noteScope,
+          onChange: (e: any) => setNoteScope(e.target.value),
+        }),
+        React.createElement('button', { className: 'mtp-add', disabled: noteBusy || !noteText.trim(), onClick: addNote }, noteBusy ? '…' : '记住'),
       ),
-      data
-        ? React.createElement(
-            'span',
-            { style: { fontSize: 11, color: C.label2 } },
-            (data.persona.complete ? 'complete 模式' : data.persona.mode),
-          )
-        : null,
     ),
 
-    // --- L3 长时层 ---
+    // --- 最近的事（L3 active 卡片流） ---
     React.createElement(
       'div',
-      { className: 'mtp-section' },
-      React.createElement('div', { className: 'mtp-head' }, 'L3 长时记忆'),
-      nodes.length === 0
-        ? React.createElement('div', { className: 'mtp-empty' }, '（空）')
-        : nodes.map((n) =>
+      { className: 'mtp-sec' },
+      React.createElement('div', { className: 'mtp-head' }, '记下的事', React.createElement('span', { className: 'mtp-sub' }, '长时记忆，改动会影响快照')),
+      activeNodes.length === 0
+        ? React.createElement('div', { className: 'mtp-empty' }, '还没有记住任何事')
+        : activeNodes.map((n) =>
+            React.createElement(NodeCard, { key: n.id, node: n, onDone: refresh, post, setError }),
+          ),
+    ),
+
+    // --- L2 短时层 ---
+    (buffer.length > 0 || pending.length > 0)
+      ? React.createElement(
+          'div',
+          { className: 'mtp-sec' },
+          React.createElement('div', { className: 'mtp-head' }, '短时与冲突', React.createElement('span', { className: 'mtp-sub' }, 'L2 · 自动流转，无需手动管理')),
+          buffer.map((b) =>
             React.createElement(
               'div',
-              { className: 'mtp-node', key: n.id },
-              React.createElement('div', { className: 'mtp-statement' }, n.statement),
+              { className: 'mtp-card', key: b.id },
+              React.createElement('div', { className: 'mtp-statement' }, b.statement),
+            ),
+          ),
+          pending.map((c) =>
+            React.createElement(
+              'div',
+              { className: 'mtp-card', key: c.conflict_id },
               React.createElement(
                 'div',
                 { className: 'mtp-meta' },
-                React.createElement('span', { className: 'mtp-tag' }, n.type),
-                React.createElement('span', { className: 'mtp-tag' }, n.status),
-                n.scope ? React.createElement('span', { className: 'mtp-tag' }, n.scope) : null,
-                React.createElement('span', { style: { marginLeft: 'auto' } }, fmtTime(n.updated_at)),
-                React.createElement(
-                  'button',
-                  {
-                    className: 'mtp-del',
-                    disabled: busy === n.id,
-                    onClick: () => forget(n.id),
-                  },
-                  busy === n.id ? '…' : '删',
-                ),
+                React.createElement('span', { className: 'mtp-chip warn' }, '冲突待确认'),
+              ),
+              React.createElement('div', { className: 'mtp-statement' }, c.question),
+            ),
+          ),
+        )
+      : null,
+
+    // --- 决策日志 ---
+    React.createElement(
+      'div',
+      { className: 'mtp-sec' },
+      React.createElement('div', { className: 'mtp-head' }, '决策日志', React.createElement('span', { className: 'mtp-sub' }, 'agent 的记忆操作记录')),
+      log.length === 0
+        ? React.createElement('div', { className: 'mtp-empty' }, '（无记录）')
+        : React.createElement(
+            'div',
+            { className: 'mtp-logbox' },
+            log.slice(-50).reverse().map((l, i) =>
+              React.createElement(
+                'div',
+                { className: 'mtp-logline', key: i },
+                React.createElement('span', { className: 'mtp-logts' }, relTime(l.ts)),
+                React.createElement('span', null, l.event),
               ),
             ),
           ),
     ),
 
-    // --- L2 短时层 ---
-    React.createElement(
-      'div',
-      { className: 'mtp-section' },
-      React.createElement('div', { className: 'mtp-head' }, 'L2 短时记忆'),
-      buffer.length === 0 && pending.length === 0
-        ? React.createElement('div', { className: 'mtp-empty' }, '（空）')
-        : null,
-      buffer.map((b) =>
-        React.createElement(
-          'div',
-          { className: 'mtp-node', key: b.id },
-          React.createElement('div', { className: 'mtp-statement' }, b.statement),
-          React.createElement(
-            'div',
-            { className: 'mtp-meta' },
-            React.createElement('span', { className: 'mtp-tag' }, b.type),
-          ),
-        ),
-      ),
-      pending.map((c) =>
-        React.createElement(
-          'div',
-          { className: 'mtp-node', key: c.conflict_id },
-          React.createElement('div', { className: 'mtp-statement' }, c.question),
-          React.createElement(
-            'div',
-            { className: 'mtp-meta' },
-            React.createElement('span', { className: 'mtp-tag', style: { color: C.danger } }, '冲突待确认'),
-          ),
-        ),
-      ),
-    ),
-
-    // --- L1 瞬时层 ---
-    React.createElement(
-      'div',
-      { className: 'mtp-section' },
-      React.createElement('div', { className: 'mtp-head' }, 'L1 瞬时层'),
-      React.createElement(
-        'div',
-        { className: 'mtp-empty' },
-        layers?.l1.snapshot_stale ? '快照已过期（待重建）' : '快照已冻结',
-      ),
-    ),
-
-    // --- 决策日志 ---
-    React.createElement(
-      'div',
-      { className: 'mtp-section' },
-      React.createElement('div', { className: 'mtp-head' }, '决策日志'),
-      log.length === 0
-        ? React.createElement('div', { className: 'mtp-empty' }, '（无记录）')
-        : React.createElement(
-            'div',
-            { className: 'mtp-log' },
-            log
-              .slice(-50)
-              .reverse()
-              .map((l, i) =>
-                React.createElement(
-                  'div',
-                  { className: 'mtp-logline', key: i },
-                  React.createElement('span', { className: 'mtp-logts' }, fmtTime(l.ts)),
-                  React.createElement('span', null, l.event),
-                ),
-              ),
-          ),
-    ),
-
-    error
-      ? React.createElement('div', { className: 'mtp-err' }, error)
-      : null,
+    error ? React.createElement('div', { className: 'mtp-err' }, error) : null,
   )
 }
 

@@ -40,6 +40,7 @@ function makeMockContext({ completeMode = false } = {}) {
   const handlers = {}
   const injectedSections = []
   const llmCalls = []
+  const routes = new Map()
 
   const ctx = {
     effect(fn) {
@@ -88,7 +89,15 @@ function makeMockContext({ completeMode = false } = {}) {
     },
     agents: {},
   }
-  return { ctx, tools, handlers, injectedSections, llmCalls }
+  // Mock webServer: capture registered routes so panel API handlers can be
+  // driven directly (req is a stream, res collects writes).
+  ctx.webServer = {
+    register(def) {
+      routes.set(def.path, def.handler)
+      return () => routes.delete(def.path)
+    },
+  }
+  return { ctx, tools, handlers, injectedSections, llmCalls, routes }
 }
 
 // --- main -------------------------------------------------------------------
@@ -98,7 +107,7 @@ async function main() {
 
   // 1. apply() boots without throwing, exposes name + inject.
   console.log('\n[1] apply() boot')
-  const { ctx, tools, handlers, injectedSections, llmCalls } = makeMockContext()
+  const { ctx, tools, handlers, injectedSections, llmCalls, routes } = makeMockContext()
   apply(ctx, { baseDir, config: { logging_enabled: true } })
   assert(name === 'dsh-memory-tree', 'name exported')
   assert(Array.isArray(inject) && inject.length > 0, 'inject declared')
@@ -373,6 +382,63 @@ async function main() {
     fullLog.some((l) => l.event === 'b'),
     'readDecisionLog includes appended entries',
   )
+
+  // 16. panel API: note / edit / forget handlers end-to-end.
+  console.log('\n[16] panel API handlers')
+  assert(routes.has('/dsh-memory-tree-api/state'), 'state route registered')
+  assert(routes.has('/dsh-memory-tree-api/note'), 'note route registered')
+  assert(routes.has('/dsh-memory-tree-api/edit'), 'edit route registered')
+  assert(routes.has('/dsh-memory-tree-api/forget'), 'forget route registered')
+
+  const { EventEmitter } = await import('node:events')
+  const callHandler = async (path, body, method = 'POST') => {
+    const req = new EventEmitter()
+    req.method = method
+    const res = {
+      code: 0,
+      body: '',
+      writeHead(status, _headers) {
+        this.code = status
+      },
+      end(payload) {
+        this.body = payload ?? ''
+      },
+    }
+    const handler = routes.get(path)
+    const p = handler(req, res)
+    req.emit('data', Buffer.from(JSON.stringify(body ?? {})))
+    req.emit('end')
+    await p
+    return { status: res.code, json: JSON.parse(res.body || '{}') }
+  }
+
+  const noteRes = await callHandler('/dsh-memory-tree-api/note', {
+    statement: '用户不吃香菜',
+    type: 'rule',
+    scope: '',
+  })
+  assert(noteRes.status === 200 && noteRes.json.ok && noteRes.json.id, 'note creates an L3 node')
+  const nodesAfterNote = await st.readL3Nodes()
+  const noted = nodesAfterNote.find((n) => n.id === noteRes.json.id)
+  assert(!!noted && noted.statement === '用户不吃香菜' && noted.source === 'confirmed' && noted.status === 'active', 'noted node is active/confirmed')
+
+  const editRes = await callHandler('/dsh-memory-tree-api/edit', {
+    id: noteRes.json.id,
+    statement: '用户非常讨厌香菜',
+  })
+  assert(editRes.status === 200 && editRes.json.ok, 'edit updates the node')
+  const afterEdit = (await st.readL3Nodes()).find((n) => n.id === noteRes.json.id)
+  assert(afterEdit?.statement === '用户非常讨厌香菜', 'edit persisted')
+
+  const forgetRes = await callHandler('/dsh-memory-tree-api/forget', { id: noteRes.json.id })
+  assert(forgetRes.status === 200 && forgetRes.json.ok && forgetRes.json.removed, 'forget removes the node')
+  const afterForget = (await st.readL3Nodes()).find((n) => n.id === noteRes.json.id)
+  assert(!afterForget, 'forgotten node is gone')
+
+  const stateRes = await callHandler('/dsh-memory-tree-api/state', {}, 'GET')
+  assert(stateRes.status === 200 && stateRes.json.ok, 'state returns ok')
+  assert(Array.isArray(stateRes.json.layers?.l3?.nodes), 'state exposes layered l3 nodes')
+  assert(typeof stateRes.json.first_seen === 'number', 'state exposes first_seen')
 
   // summary
   console.log(`\n=============================`)

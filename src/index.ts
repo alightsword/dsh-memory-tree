@@ -298,6 +298,7 @@ export function apply(ctx: Context, rawConfig?: MemoryTreeConfig) {
                       description: '长时层：持久化规矩/事实',
                     },
                   },
+                  first_seen: nodes.length > 0 ? Math.min(...nodes.map((n) => n.created_at)) : 0,
                   log: await store.readDecisionLog(),
                   config,
                 })
@@ -327,9 +328,75 @@ export function apply(ctx: Context, rawConfig?: MemoryTreeConfig) {
             },
           }),
         )
+        // Manual note: user-entered L3 memory (source: confirmed, active).
+        disposers.push(
+          webServer.register({
+            kind: 'exact',
+            path: '/dsh-memory-tree-api/note',
+            async handler(req: any, res: any) {
+              if (req.method !== 'POST') return reply(res, { ok: false, error: 'method' }, 405)
+              try {
+                const body = await readBody(req)
+                const statement = String(body?.statement ?? '').trim()
+                if (!statement) return reply(res, { ok: false, error: 'missing statement' }, 400)
+                const type = body?.type === 'fact' ? 'fact' : 'rule'
+                const scope = typeof body?.scope === 'string' ? body.scope.trim() : ''
+                const nodes = await store.readL3Nodes()
+                const now = Date.now()
+                const node: any = {
+                  id: randomUUID(),
+                  statement,
+                  type,
+                  status: 'active',
+                  source: 'confirmed',
+                  base_weight: 1,
+                  created_at: now,
+                  updated_at: now,
+                }
+                if (scope) node.scope = scope
+                nodes.push(node)
+                await store.writeL3Nodes(nodes)
+                await store.setSnapshotStale()
+                await log('node_noted', { node_id: node.id, statement: statement.slice(0, 60) })
+                reply(res, { ok: true, id: node.id })
+              } catch (err: any) {
+                reply(res, { ok: false, error: String(err?.message ?? err) }, 400)
+              }
+            },
+          }),
+        )
+        // Edit an existing L3 node's statement (and optionally its scope).
+        disposers.push(
+          webServer.register({
+            kind: 'exact',
+            path: '/dsh-memory-tree-api/edit',
+            async handler(req: any, res: any) {
+              if (req.method !== 'POST') return reply(res, { ok: false, error: 'method' }, 405)
+              try {
+                const body = await readBody(req)
+                const id = String(body?.id ?? '')
+                const statement = String(body?.statement ?? '').trim()
+                if (!id || !statement)
+                  return reply(res, { ok: false, error: 'missing id or statement' }, 400)
+                const nodes = await store.readL3Nodes()
+                const node = nodes.find((n) => n.id === id)
+                if (!node) return reply(res, { ok: false, error: 'node not found' }, 404)
+                node.statement = statement
+                if (typeof body?.scope === 'string') node.scope = body.scope.trim() || undefined
+                node.updated_at = Date.now()
+                await store.writeL3Nodes(nodes)
+                await store.setSnapshotStale()
+                await log('node_edited', { node_id: id, statement: statement.slice(0, 60) })
+                reply(res, { ok: true })
+              } catch (err: any) {
+                reply(res, { ok: false, error: String(err?.message ?? err) }, 400)
+              }
+            },
+          }),
+        )
         return () => disposers.forEach((d) => d())
       },
-      'dsh-memory-tree: /dsh-memory-tree-api',
+      'dsh-memory-tree-api',
     )
   }
 
