@@ -353,6 +353,27 @@ async function main() {
   assert((await probe('界面不高', '界面要高')) === true, '不高 vs 高 → conflict')
   assert((await probe('用户不得迟到', '用户可以迟到')) === true, '不得 vs 可以 → conflict')
 
+  // 15. store delete + full log read (backing the sidebar panel API).
+  console.log('\n[15] store delete + decision log')
+  const { MemoryStore } = await import('../lib/store.js')
+  const st = new MemoryStore(baseDir)
+  await st.ensureSkeleton()
+  await st.writeL3Nodes([
+    { id: 'keep', statement: '保留', type: 'fact', status: 'active', source: 'confirmed', base_weight: 1, created_at: Date.now(), updated_at: Date.now() },
+    { id: 'drop', statement: '删除', type: 'fact', status: 'active', source: 'confirmed', base_weight: 1, created_at: Date.now(), updated_at: Date.now() },
+  ])
+  assert((await st.deleteL3Node('drop')) === true, 'deleteL3Node removes existing node')
+  assert((await st.deleteL3Node('missing')) === false, 'deleteL3Node returns false for missing id')
+  const remaining = await st.readL3Nodes()
+  assert(remaining.length === 1 && remaining[0].id === 'keep', 'only kept node remains')
+  await st.appendDecisionLog({ ts: 1, event: 'a' })
+  await st.appendDecisionLog({ ts: 2, event: 'b' })
+  const fullLog = await st.readDecisionLog()
+  assert(
+    fullLog.some((l) => l.event === 'b'),
+    'readDecisionLog includes appended entries',
+  )
+
   // summary
   console.log(`\n=============================`)
   console.log(`PASS: ${passed}  FAIL: ${failed}`)

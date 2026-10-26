@@ -1,6 +1,6 @@
 {
   "name": "dsh-memory-tree",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "DSH native plugin: cross-session three-tier memory (transient / short-term / long-term) with write-before-conflict interception",
   "type": "module",
   "main": "lib/index.js",

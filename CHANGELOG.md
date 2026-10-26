@@ -2,6 +2,21 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.2.0] - 2026-10-26
+
+### 新增
+
+- **侧边栏面板**（feiyu-memory 同款双 slot）：`sidebar.panellist` + `main`，展示三层记忆 + agent 决策日志。
+- **分层记忆视图**：L1 瞬时层（快照状态）/ L2 短时层（buffer + 冲突候选）/ L3 长时层（规矩/事实），保留插件的分层记忆核心特点。
+- **用户可操作**：删除 L3 节点（`POST /dsh-memory-tree-api/forget`）、刷新面板。
+- **agent 决策日志展示**：完整决策日志（`GET /dsh-memory-tree-api/state`）。
+- **schemastery Config schema**：配置项从 5 项扩到 9 项，DSH 设置页自动生成可编辑表单。
+
+### 变更
+
+- host webServer API 从单端点拆为多端点：`/state`（分层+日志+配置）、`/forget`（删除）。
+- `MemoryStore` 新增 `deleteL3Node`、`readDecisionLog` 方法。
+
 ## [0.1.1] - 2026-10-26
 
 ### 修复

@@ -109,6 +109,16 @@ export class MemoryStore {
     return nodes.filter((n) => n.status === 'active' && n.type === 'rule')
   }
 
+  /** Remove an L3 node by id. Returns true when a node was removed. */
+  async deleteL3Node(id: string): Promise<boolean> {
+    const nodes = await this.readL3Nodes()
+    const before = nodes.length
+    const next = nodes.filter((n) => n.id !== id)
+    if (next.length === before) return false
+    await this.writeL3Nodes(next)
+    return true
+  }
+
   async readRootMd(): Promise<string> {
     try {
       return await fs.readFile(this.l3Root(), 'utf-8')
@@ -187,6 +197,25 @@ export class MemoryStore {
         .map((l) => {
           try {
             return JSON.parse(l) as { ts: number; event: string }
+          } catch {
+            return { ts: 0, event: l.slice(0, 120) }
+          }
+        })
+    } catch {
+      return []
+    }
+  }
+
+  /** Read the full decision log (oldest first), parsed. */
+  async readDecisionLog(): Promise<Array<{ ts: number; event: string; detail?: unknown }>> {
+    try {
+      const raw = await fs.readFile(this.decisionLog(), 'utf-8')
+      return raw
+        .split('\n')
+        .filter((l) => l.trim().length > 0)
+        .map((l) => {
+          try {
+            return JSON.parse(l) as { ts: number; event: string; detail?: unknown }
           } catch {
             return { ts: 0, event: l.slice(0, 120) }
           }

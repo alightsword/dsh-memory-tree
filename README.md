@@ -19,18 +19,25 @@ DSH 原生插件，给模型加**跨会话三级记忆**（瞬时 L1 / 短时 L2
 
 ### Client 半边（浏览器）
 
-client 面板以标准 `dsh.client` bundle 格式加载，与 dsh-meme 同款。实际踩坑后确认的硬性约定：
+client 是一个**侧边栏面板**（与 feiyu-memory 同款双 slot 结构），展示插件的三层记忆 + agent 决策日志，并支持删除节点。实际踩坑后确认的硬性约定：
 
 | 约定 | 说明 |
 |------|------|
 | `exports.inject` | client 必须导出 `inject` 数组声明所需服务，这里声明 `['slots']`；缺了它宿主不会注入 slots |
 | 服务访问 | 用 `ctx.get('slots')`，不是 `ctx.slots`。服务在 cordis 容器里，不在 ctx 属性上 |
 | 注册方式 | `slots.inject(owner, () => slots.register(...))`，不是裸 `slots.register` |
-| slot 名 | 设置页 slot 是 `settings.section`，不是 `domain.settings.card` |
+| 侧边栏 slot | `sidebar.panellist`（格子）+ `main`（面板），两者 key/id 必须一致 |
 | React | 走 `require('react')` 从浏览器模块表拿，不打包进产物（`--external:react`） |
 | 产物格式 | `window.__ModuleLoader__.load({ id: 'dsh-memory-tree', factory: (require) => {... return module.exports }})`，factory 必须返回插件 surface |
 
-`src/client/index.tsx` 由 esbuild 单独编译（`--format=cjs` + ModuleLoader 包装），不参与 tsc（避免 DOM lib 冲突）。
+面板数据通过 host webServer 的两个端点获取：
+
+| 端点 | 说明 |
+|------|------|
+| `GET /dsh-memory-tree-api/state` | 分层记忆（L1/L2/L3）+ 完整决策日志 + 配置 |
+| `POST /dsh-memory-tree-api/forget` | 按 id 删除一个 L3 节点 |
+
+配置项通过 schemastery `Config` schema 暴露，DSH 设置页自动生成可编辑表单（参考 dsh-m 机制）。`src/client/index.tsx` 由 esbuild 单独编译（`--format=cjs` + ModuleLoader 包装），不参与 tsc（避免 DOM lib 冲突）。
 
 ## 关键实现校准
 
@@ -95,7 +102,7 @@ dsh-memory-tree/
 │       ├── memory_recall.ts
 │       ├── memory_show.ts
 │       └── memory_resolve.ts
-└── src/client/index.tsx      # 设置卡片
+└── src/client/index.tsx      # 侧边栏面板（分层视图 + 日志 + 删除）
 ```
 
 ## 工具清单
@@ -161,9 +168,16 @@ dsh --profile demo
 
 ## 配置
 
-- 遗忘档位 `forgetting_tier`，取值 gentle / normal / aggressive
-- P1 提问开关与文案 `p1_question_enabled` / `p1_question_copy`
-- 日志开关 `logging_enabled`
-- 召回 top-K `recall_top_k`
+通过 schemastery `Config` schema 暴露，DSH 设置页自动生成表单，也可在 `cordis.patch.yml` 的 `config:` 里写（中文注释见该文件）。共 9 项：
 
-其余只读展示，标注「高级配置，后续版本开放」。
+| 配置项 | 默认 | 说明 |
+|--------|------|------|
+| `forgetting_tier` | `normal` | 遗忘档位：gentle / normal / aggressive |
+| `forgetting_factor` | `0` | 自定义遗忘因子（0 = 用档位预设） |
+| `archive_threshold` | `0.15` | 归档阈值，衰减后权重低于此值归档 |
+| `recall_top_k` | `3` | pre-step 召回 top-K 条线索 |
+| `snapshot_budget_chars` | `2000` | 冻结快照注入预算（字符数） |
+| `p1_question_enabled` | `true` | 冲突时是否向用户提问确认 |
+| `p1_question_copy` | （默认文案） | 冲突提问文案 |
+| `logging_enabled` | `true` | 是否记录决策日志 |
+| `base_dir` | 空 | 记忆存储目录（空 = $DSH_HOME/memory-tree） |

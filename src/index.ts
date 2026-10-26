@@ -227,51 +227,108 @@ export function apply(ctx: Context, rawConfig?: MemoryTreeConfig) {
     return () => {}
   })
 
-  // --- settings API for the client panel -----------------------------------
-  // The client half (browser) cannot read the filesystem; expose the memory
-  // state over the host webServer (same pattern as dsh-meme's /dsh-memes-api).
+  // --- panel API for the client half ---------------------------------------
+  // The client (browser) cannot read the filesystem; expose the layered
+  // memory state + log over the host webServer (same pattern as feiyu-memory's
+  // /feiyu-diary and dsh-meme's /dsh-memes-api).
   const webServer = (ctx as any).webServer ?? (ctx as any).get?.('webServer')
   if (webServer?.register) {
+    const reply = (res: any, obj: unknown, status = 200) => {
+      res.writeHead(status, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+      })
+      res.end(JSON.stringify(obj))
+    }
+    const readBody = (req: any): Promise<any> =>
+      new Promise((resolve) => {
+        let raw = ''
+        req.on('data', (c: Buffer) => (raw += c.toString('utf-8')))
+        req.on('end', () => {
+          try {
+            resolve(raw ? JSON.parse(raw) : {})
+          } catch {
+            resolve({})
+          }
+        })
+        req.on('error', () => resolve({}))
+      })
+
     ctx.effect(
-      () =>
-        webServer.register({
-          kind: 'exact',
-          path: '/dsh-memory-tree-api',
-          async handler(_req: any, res: any) {
-            const json = (obj: unknown, status = 200) => {
-              res.writeHead(status, {
-                'Content-Type': 'application/json; charset=utf-8',
-                'Cache-Control': 'no-store',
-              })
-              res.end(JSON.stringify(obj))
-            }
-            try {
-              const nodes = await store.readL3Nodes()
-              const buffer = await store.readBuffer()
-              const pending = await store.readPending()
-              const stale = await store.isSnapshotStale()
-              json({
-                ok: true,
-                persona: {
-                  complete: snapshotDeps.isCompleteMode(),
-                  mode: stale ? 'recall-only (snapshot stale)' : 'snapshot + recall',
-                },
-                log: await store.readDecisionLogTail(30),
-                memory: {
-                  active_rules: nodes.filter((n) => n.status === 'active' && n.type === 'rule').length,
-                  active_facts: nodes.filter((n) => n.status === 'active' && n.type === 'fact').length,
-                  superseded: nodes.filter((n) => n.status === 'superseded').length,
-                  buffer_count: buffer.length,
-                  pending_conflicts: (pending.conflicts ?? []).filter((c) => c.status === 'pending')
-                    .length,
-                },
-                config,
-              })
-            } catch (err: any) {
-              json({ ok: false, error: String(err?.message ?? err) }, 500)
-            }
-          },
-        }),
+      () => {
+        const disposers: Array<() => void> = []
+        disposers.push(
+          webServer.register({
+            kind: 'exact',
+            path: '/dsh-memory-tree-api/state',
+            async handler(_req: any, res: any) {
+              try {
+                const nodes = await store.readL3Nodes()
+                const buffer = await store.readBuffer()
+                const pending = await store.readPending()
+                const stale = await store.isSnapshotStale()
+                reply(res, {
+                  ok: true,
+                  persona: {
+                    complete: snapshotDeps.isCompleteMode(),
+                    mode: stale ? 'recall-only (snapshot stale)' : 'snapshot + recall',
+                  },
+                  layers: {
+                    l1: {
+                      snapshot_stale: stale,
+                      description: '瞬时层：快照冻结标记 + 本轮召回结果',
+                    },
+                    l2: {
+                      buffer: buffer.map((n) => ({ id: n.id, statement: n.statement, type: n.type })),
+                      pending_conflicts: (pending.conflicts ?? []).filter(
+                        (c) => c.status === 'pending',
+                      ),
+                      description: '短时层：buffer + 冲突候选队列',
+                    },
+                    l3: {
+                      nodes: nodes.map((n) => ({
+                        id: n.id,
+                        statement: n.statement,
+                        type: n.type,
+                        status: n.status,
+                        scope: n.scope ?? '',
+                        source: n.source,
+                        updated_at: n.updated_at,
+                      })),
+                      description: '长时层：持久化规矩/事实',
+                    },
+                  },
+                  log: await store.readDecisionLog(),
+                  config,
+                })
+              } catch (err: any) {
+                reply(res, { ok: false, error: String(err?.message ?? err) }, 500)
+              }
+            },
+          }),
+        )
+        disposers.push(
+          webServer.register({
+            kind: 'exact',
+            path: '/dsh-memory-tree-api/forget',
+            async handler(req: any, res: any) {
+              if (req.method !== 'POST') return reply(res, { ok: false, error: 'method' }, 405)
+              try {
+                const body = await readBody(req)
+                const id = String(body?.id ?? '')
+                if (!id) return reply(res, { ok: false, error: 'missing id' }, 400)
+                const removed = await store.deleteL3Node(id)
+                if (removed) await store.setSnapshotStale()
+                await log('node_forgotten', { node_id: id })
+                reply(res, { ok: true, removed })
+              } catch (err: any) {
+                reply(res, { ok: false, error: String(err?.message ?? err) }, 400)
+              }
+            },
+          }),
+        )
+        return () => disposers.forEach((d) => d())
+      },
       'dsh-memory-tree: /dsh-memory-tree-api',
     )
   }
