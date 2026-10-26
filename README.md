@@ -2,7 +2,7 @@
 
 DSH 原生插件，给模型加**跨会话三级记忆**（瞬时 L1 / 短时 L2 / 长时 L3），并在写入路径上做**冲突拦截**。一条新表达如果跟现有规矩矛盾，在用户确认之前不会进长时记忆。
 
-> 开发预览：本插件针对 `@deepseek-ai/dsh >= 0.2.1-rc.2` 编写。预览版 API 会在 release candidate 之间重命名字段，升级宿主前请重新核对关键名。
+> 开发预览：本插件针对 `@deepseek-ai/dsh >= 0.2.1-rc.3` 编写。预览版 API 会在 release candidate 之间重命名字段，升级宿主前请重新核对关键名。
 
 ## 真实 API 校准说明
 
@@ -17,7 +17,20 @@ DSH 原生插件，给模型加**跨会话三级记忆**（瞬时 L1 / 短时 L2
 | `defineTool` 单参 `execute(args)` | 实际 `execute(args, exec: ToolRunContext)` 双参；`output.render(args, value)` 返回 `ContentBlock[]`（`{ type: 'text', text }`） |
 | 参数 schema JSON-schema 风格 | 实际是 schemastery 风格 `ParameterSchemaSpec`（`{ type, required: true, enum, description }`） |
 
-> 依赖注：`@deepseek-ai/dsh-client-runtime` 的传递依赖 `@deepseek-ai/dsh-compact` 在 registry 上 404，发布不完整。client 面板因此暂用软依赖，`src/client/index.tsx` 以宽松类型声明，运行时由宿主注入，待该包修复后再硬接。
+### Client 半边（浏览器）
+
+client 面板以标准 `dsh.client` bundle 格式加载，与 dsh-meme 同款。实际踩坑后确认的硬性约定：
+
+| 约定 | 说明 |
+|------|------|
+| `exports.inject` | client 必须导出 `inject` 数组声明所需服务，这里声明 `['slots']`；缺了它宿主不会注入 slots |
+| 服务访问 | 用 `ctx.get('slots')`，不是 `ctx.slots`。服务在 cordis 容器里，不在 ctx 属性上 |
+| 注册方式 | `slots.inject(owner, () => slots.register(...))`，不是裸 `slots.register` |
+| slot 名 | 设置页 slot 是 `settings.section`，不是 `domain.settings.card` |
+| React | 走 `require('react')` 从浏览器模块表拿，不打包进产物（`--external:react`） |
+| 产物格式 | `window.__ModuleLoader__.load({ id: 'dsh-memory-tree', factory: (require) => {... return module.exports }})`，factory 必须返回插件 surface |
+
+`src/client/index.tsx` 由 esbuild 单独编译（`--format=cjs` + ModuleLoader 包装），不参与 tsc（避免 DOM lib 冲突）。
 
 ## 关键实现校准
 
@@ -25,7 +38,7 @@ DSH 原生插件，给模型加**跨会话三级记忆**（瞬时 L1 / 短时 L2
 
 | 问题 | 现象 | 修复 |
 |------|------|------|
-| **`dsh-tools` 版本选错** | `npm view @deepseek-ai/dsh-tools` 的 `latest` tag 停在 `0.0.1-rc.1`，但其产物 import 的 `CallId` 等命名导出在 `dsh-llm@0.2.1-rc.2` 里已移除，Node 原生 ESM 加载直接报 `SyntaxError` | 精确锁定 `0.2.1-rc.2`，与 `dsh` 同步，**不用 `^` 前缀**。用 `^` 会漂移到 rc.3，其 peer 要求 rc.3 的 dsh-agent，导致 ERESOLVE |
+| **`dsh-tools` 版本选错** | `npm view @deepseek-ai/dsh-tools` 的 `latest` tag 停在 `0.0.1-rc.1`，但其产物 import 的 `CallId` 等命名导出在 `dsh-llm@0.2.1-rc.2` 里已移除，Node 原生 ESM 加载直接报 `SyntaxError` | 精确锁定与 `dsh` 同步的版本（当前 `0.2.1-rc.3`），**不用 `^` 前缀**。用 `^` 会漂到下一个 rc，其 peer 要求对应的 dsh-agent，导致 ERESOLVE |
 | **中文否定词 `\b` 失效** | `/\b(不|不要|讨厌)\b/` 在 JS 里 `\b` 对中文（非 `\w`）不生效，所有中文否定词检测全失效，冲突漏检 | 中文 alternation 去掉 `\b`，仅英文保留 `\b` |
 | **Node ESM 需要 `.js` 后缀** | `moduleResolution: "Bundler"` 允许省略扩展名，但 `lib/*.js` 被 Node 原生 ESM 加载时 `Cannot find module './types'` | 改用 `moduleResolution: "NodeNext"`，所有相对 import 显式加 `.js` |
 | **`execute` 返回严格 `JsonValue`** | `dsh-tools@0.2.1-rc.2` 的 `execute` 要求返回 `JsonValue`，含 `undefined` 可选字段或 `MemoryNode[]` 会报类型错 | 工具返回值统一经 `json()`（`JSON.parse(JSON.stringify(x))`）规范化 |
@@ -39,7 +52,7 @@ DSH 原生插件，给模型加**跨会话三级记忆**（瞬时 L1 / 短时 L2
 | pre-step 召回用 `agent/pre-step` + `next()` 追加 `decision.messages`，`source.form: 'recall'` | ✅ 采纳，原本误用 `agent/inbox/claimed` + `agent.inject`，已修正 |
 | 写回用 `agent/turn-stopping`，不是 disposed | ✅ 采纳 |
 | `source.kind: 'plugin:hindsight'`，V4 producer-owned kind | ✅ 采纳，改为 `plugin:dsh-memory-tree` + `form` |
-| **完全不 import dsh 包**，用 `toDshParameters` 自拼 schema、结构类型 | ❌ 未采纳：保留 `@deepseek-ai/dsh-tools`（已精确锁定 `0.2.1-rc.2`），换取 `defineTool` 的类型安全与参数校验。这是已知权衡，若未来 dsh 版本再漂移，可退回到 Hindsight 的零依赖方案 |
+| **完全不 import dsh 包**，用 `toDshParameters` 自拼 schema、结构类型 | ❌ 未采纳：保留 `@deepseek-ai/dsh-tools`（与 `dsh` 同步锁定），换取 `defineTool` 的类型安全与参数校验。这是已知权衡，若未来 dsh 版本再漂移，可退回到 Hindsight 的零依赖方案 |
 | `inject: ['agents']` + `ctx.inject(['tools'], ...)` | 部分采纳：`inject` 保留 `['tools','systemPrompt','agents']`，诚实声明依赖；工具仍走 `ctx.tools.register` |
 
 ## 为什么是插件而不是 Skill
@@ -122,10 +135,10 @@ npm run build
 # 类型检查
 npm run typecheck
 
-# 端到端测试（mock DSH Context 真实调用 apply，验证 13 组场景）
+# 端到端测试（mock DSH Context 真实调用 apply，14 组场景 52 断言）
 npm test
 
-# 安装到测试 profile
+# 安装到测试 profile（桌面端 profile 由 Electron 独占管理，须在应用内或手动装）
 dsh plugin --profile demo add ./dsh-memory-tree
 dsh --profile demo --dump-config
 dsh --profile demo

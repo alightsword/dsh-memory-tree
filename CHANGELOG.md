@@ -2,6 +2,19 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.1.1] - 2026-10-26
+
+### 修复
+
+- **client 半边违反 DSH client bundle 规范，导致桌面端启动失败**。重写为对齐 dsh-meme 的标准格式：导出 `inject` 数组、`ctx.get('slots')` 访问服务、`slots.inject(...)` 包装注册、`settings.section` slot、React 走 `require('react')`。
+- client 产物改用 esbuild `--format=cjs` + `window.__ModuleLoader__.load` 包装，factory 返回插件 surface（此前 IIFE 无返回值导致 `invalid plugin, received undefined`）。
+- `src/client` 从 tsc 编译剥离（esbuild 单独编译），避免 DOM lib 冲突。
+
+### 变更
+
+- 依赖对齐 `dsh` / `dsh-tools` 到 `0.2.1-rc.3`（与桌面端宿主一致）。
+- 移除过时的 `renderSettingsCard` 导出与 `dsh-client-runtime` 软依赖说明。
+
 ## [0.1.0] - 2026-10-26
 
 ### 新增
