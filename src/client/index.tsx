@@ -45,12 +45,27 @@ interface SettingsCardData {
 }
 
 export async function apply(ctx: DshClientContext): Promise<void> {
-  const slots: SlotRegistry | undefined = ctx?.slots
-  if (!slots?.register) return
-  // The card is registered as a function; the host resolves the four blocks.
-  slots.register({ name: 'domain.settings.card' }, (data: SettingsCardData) =>
-    renderSettingsCard(data),
-  )
+  console.log('[dsh-memory-tree] client apply entered', {
+    hasCtx: !!ctx,
+    ctxKeys: ctx ? Object.keys(ctx).slice(0, 20) : null,
+    hasSlots: !!ctx?.slots,
+    slotKeys: ctx?.slots ? Object.keys(ctx.slots).slice(0, 20) : null,
+  })
+  try {
+    const slots: SlotRegistry | undefined = ctx?.slots
+    if (!slots?.register) {
+      console.warn('[dsh-memory-tree] no slots registry on ctx; card not registered')
+      return
+    }
+    // The card is registered as a function; the host resolves the four blocks.
+    slots.register({ name: 'domain.settings.card' }, (data: SettingsCardData) =>
+      renderSettingsCard(data),
+    )
+    console.log('[dsh-memory-tree] settings card registered')
+  } catch (err) {
+    console.error('[dsh-memory-tree] client apply failed', err)
+    throw err
+  }
 }
 
 /**
