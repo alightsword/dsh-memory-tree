@@ -1,10 +1,15 @@
 /**
  * lifecycle.ts — session lifecycle hooks.
  *
- *   agent/session-start → build frozen snapshot, inject channel one.
- *   agent/status (flush) → incrementally persist L2 buffer; fail-open.
+ *   agent/created        → build frozen snapshot, inject channel one.
+ *                          (rc.3 has NO `agent/session-start` event; the
+ *                          serial `agent/created` fires once per live agent
+ *                          with source 'startup' | 'resume' | 'clear' |
+ *                          'compaction'.)
+ *   agent/turn-stopping  → incrementally persist L2 buffer; fail-open.
  *   agent/disposed       → run a lightweight governance pass, fail-open.
- *   (per user message)   → run recall.ts for channel-two injection via agent.inject().
+ *   (per user message)   → run recall.ts for channel-two injection through the
+ *                          agent/pre-step decision messages.
  */
 
 import type { MemoryStore } from './store.js'
@@ -22,7 +27,8 @@ export interface LifecycleDeps {
 }
 
 export interface LifecycleHooks {
-  onSessionStart: () => Promise<void>
+  /** @param source agent/created source: startup | resume | clear | compaction. */
+  onSessionStart: (source?: string) => Promise<void>
   onFlush: () => Promise<void>
   onDisposed: () => Promise<void>
   onUserMessage: (message: string) => Promise<RecallOutput>
@@ -30,11 +36,12 @@ export interface LifecycleHooks {
 
 export function createLifecycle(deps: LifecycleDeps): LifecycleHooks {
   return {
-    async onSessionStart() {
+    async onSessionStart(source?: string) {
       try {
         if (await deps.store.isSnapshotStale()) {
           await deps.store.clearSnapshotStale()
         }
+        await deps.snapshot.log('session_start', { source: source ?? 'unknown' })
         await runSnapshot(deps.snapshot)
       } catch (err) {
         await deps.snapshot.log('session_start_error', { error: String(err) })

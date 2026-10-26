@@ -27,6 +27,14 @@ function assert(cond, label) {
 }
 
 // --- mock DSH Context ------------------------------------------------------
+// Mirrors the rc.3 (0.2.1-rc.3, desktop) contract the plugin now targets:
+//   * SystemPrompt exposes `layers` (a ScopedLayers) — NOT a private `_layers`;
+//     complete mode is read through `layers.merge(undefined, l => l.sections)`
+//     and looked up on `deployment:persona-prefix`.
+//   * `section.text` may be a thunk, and dsh-system-prompt re-renders it on
+//     every assemble(), so the mock resolves functions lazily.
+//   * The lifecycle event is `agent/created` (serial, payload {agent, source});
+//     rc.3 never emits `agent/session-start`.
 function makeMockContext({ completeMode = false } = {}) {
   const tools = new Map()
   const handlers = {}
@@ -52,11 +60,24 @@ function makeMockContext({ completeMode = false } = {}) {
     },
     systemPrompt: {
       section(s) {
-        injectedSections.push(s)
+        const entry = { name: s.name, order: s.order }
+        Object.defineProperty(entry, 'text', {
+          enumerable: true,
+          get: () => (typeof s.text === 'function' ? s.text({}) : s.text),
+        })
+        injectedSections.push(entry)
       },
-      _layers: completeMode
-        ? [[{ name: 'deployment:persona', complete: true }]]
-        : [[{ name: 'deployment:persona', complete: false }]],
+      getSectionOrder: (n) => ({ DEPLOYMENT_PERSONA_PREFIX: 0 })[n],
+      layers: {
+        merge(scope, pick) {
+          const sections = new Map()
+          sections.set(
+            'deployment:persona-prefix',
+            completeMode ? { name: 'deployment:persona-prefix', complete: true } : { name: 'deployment:persona-prefix' },
+          )
+          return pick({ sections })
+        },
+      },
     },
     llm: {
       complete(prompt) {
@@ -88,10 +109,11 @@ async function main() {
     assert(tools.has(t), `tool registered: ${t}`)
   }
 
-  // 3. session-start → snapshot injection (channel one).
-  console.log('\n[3] snapshot injection on agent/session-start')
+  // 3. agent/created → snapshot injection (channel one). rc.3 has no
+  //    agent/session-start; the serial agent/created fires once per agent.
+  console.log('\n[3] snapshot injection on agent/created')
   await new Promise((r) => setTimeout(r, 10)) // let ensureSkeleton settle
-  handlers['agent/session-start']?.[0]?.({ agent: { inject: () => {} } })
+  handlers['agent/created']?.[0]?.({ agent: { inject: () => {} }, source: 'startup' })
   await new Promise((r) => setTimeout(r, 20))
   const snap = injectedSections.find((s) => s.name === 'plugin:memory-context')
   assert(!!snap, 'snapshot section injected')
@@ -254,9 +276,18 @@ async function main() {
       decision.messages.some((m) => JSON.stringify(m).includes('未确认的冲突')),
       'reminder mentions pending conflict',
     )
+    // rc.3 ContextFormed has 'recall' and 'notice' — there is no 'reminder'.
     assert(
-      decision.messages.some((m) => m?.source?.form === 'reminder' || m?.source?.form === 'recall'),
+      decision.messages.some((m) => m?.source?.form === 'notice' || m?.source?.form === 'recall'),
       'appended message carries a dsh form tag',
+    )
+    // MessageBase requires an id on every injected message (the human message
+    // in this fixture is hand-built, so only plugin messages are checked).
+    assert(
+      decision.messages
+        .filter((m) => m?.source?.kind === 'plugin:dsh-memory-tree')
+        .every((m) => typeof m?.id === 'string' && m.id.length > 0),
+      'every injected message carries an id',
     )
   } else {
     assert(false, 'expected conflict for "用户喜欢红色" against existing rule')
@@ -268,7 +299,7 @@ async function main() {
   apply(ctx2, { baseDir, config: { logging_enabled: true } })
   const handlers2 = {}
   ctx2.on = (ev, h) => { (handlers2[ev] ??= []).push(h) }
-  handlers2['agent/session-start']?.[0]?.({ agent: { inject: () => {} } })
+  handlers2['agent/created']?.[0]?.({ agent: { inject: () => {} }, source: 'startup' })
   await new Promise((r) => setTimeout(r, 30))
   const snap2 = sec2.find((s) => s.name === 'plugin:memory-context')
   assert(!snap2, 'channel one skipped in complete mode')

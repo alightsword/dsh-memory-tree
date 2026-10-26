@@ -9,6 +9,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { randomUUID } from 'node:crypto'
 import type { MemoryConfig } from './types.js'
 import { DEFAULT_CONFIG } from './types.js'
 import { MemoryStore, resolveBaseDir } from './store.js'
@@ -26,6 +27,13 @@ import { memoryShowTool } from './tools/memory_show.js'
 export const name = 'dsh-memory-tree'
 
 export const inject = ['tools', 'systemPrompt', 'agents']
+
+/**
+ * The persona PREFIX section carries `complete: true` when the deployment runs
+ * in complete mode (`dsh-persona/lib/index.js`, and dsh-system-prompt exports
+ * both PERSONA_PREFIX_SECTION and PERSONA_SUFFIX_SECTION).
+ */
+const PERSONA_PREFIX_SECTION = 'deployment:persona-prefix'
 
 export interface MemoryTreeConfig {
   baseDir?: string
@@ -66,27 +74,49 @@ export function apply(ctx: Context, rawConfig?: MemoryTreeConfig) {
     }
   }
 
+  // Live text per section name + which names are already registered on the
+  // systemPrompt registry (duplicate registration throws inside a layer).
+  const injectedSections = new Map<string, string>()
+  const registeredSections = new Set<string>()
+
   // --- snapshot deps -------------------------------------------------------
   const snapshotDeps = {
     store,
     isCompleteMode: () => {
-      // Detect complete:true on the deployment:persona section. The section
-      // contract is { name, order, text, complete? }.
+      // complete:true lives on the persona PREFIX section, not on
+      // `deployment:persona` (that name never exists — see
+      // dsh-persona/lib/index.js: PERSONA_PREFIX_SECTION). Read it through the
+      // public ScopedLayers.merge() (dsh-scope), never a private `_layers`.
       const sp = (ctx as any).systemPrompt as any
-      const PERSONA = 'deployment:persona'
-      // Probe the registry's layers for a section named deployment:persona.
-      if (sp?._layers) {
-        for (const layer of sp._layers) {
-          for (const s of layer ?? []) {
-            if (s?.name === PERSONA) return s.complete === true
-          }
+      try {
+        const merged = sp?.layers?.merge?.(undefined, (layer: any) => layer.sections)
+        if (merged?.get) {
+          return merged.get(PERSONA_PREFIX_SECTION)?.complete === true
         }
+      } catch {
+        /* fall through */
       }
       return false
     },
     injectSection: (sectionName: string, text: string, order: number) => {
       const sp = (ctx as any).systemPrompt as any
-      sp?.section?.({ name: sectionName, order, text })
+      if (!sp?.section) return
+      // One registration per section name: ScopedLayers rejects a duplicate
+      // name inside the same layer, so a re-injection (every new agent) must
+      // only update the live text, never re-register. `section.text` may be a
+      // function (dsh-system-prompt assemble(): `typeof section.text ===
+      // "function" ? section.text(context) : section.text`), so the render is
+      // always read fresh from this map.
+      injectedSections.set(sectionName, text)
+      if (registeredSections.has(sectionName)) return
+      registeredSections.add(sectionName)
+      ctx.effect(() =>
+        sp.section({
+          name: sectionName,
+          order,
+          text: () => injectedSections.get(sectionName) ?? '',
+        }),
+      )
     },
     log,
   }
@@ -145,16 +175,19 @@ export function apply(ctx: Context, rawConfig?: MemoryTreeConfig) {
   })
 
   // --- lifecycle hooks -----------------------------------------------------
-  // Channel one (frozen snapshot) runs on session-start; channel two (pre-step
-  // recall) runs on every pre-step and APPENDS a sourced message via the real
-  // dsh pre-step decision shape (see vectorize-io/hindsight for the verified
-  // contract). Write-back runs on turn-stopping, not disposed.
+  // Channel one (frozen snapshot) runs on agent/created — rc.3 does NOT emit
+  // `agent/session-start` at all (only agent/created|pre-step|turn-stopping|
+  // disposed|status|request|request-error|assistant-stream|error). Channel two
+  // (pre-step recall) appends a sourced user message. Write-back runs on
+  // turn-stopping, not disposed.
   ctx.effect(() => {
     const on = (ctx as any).on as any
     if (!on) return () => {}
 
-    on('agent/session-start', (payload: any) => {
-      void lifecycle.onSessionStart()
+    // serial event, payload { agent, source: 'startup'|'resume'|'clear'|
+    // 'compaction', signal? } — fires exactly once per live agent.
+    on('agent/created', (payload: any) => {
+      void lifecycle.onSessionStart(payload?.source)
     })
 
     on('agent/disposed', () => {
@@ -194,15 +227,30 @@ export function apply(ctx: Context, rawConfig?: MemoryTreeConfig) {
 }
 
 /**
- * Build an injected user-role message with a producer-owned source kind and a
- * dsh `form` tag so the UI renders it as recalled material, not user input.
- * `source.kind: 'plugin:dsh-memory-tree'` is the V4 producer-owned kind.
+ * Build an injected user-role message carrying a producer-owned source kind so
+ * the host treats it as plugin material rather than human input.
+ *
+ * rc.3 facts (verified in dsh-agent-preset-registry/lib/typert.host.js):
+ *  - `MessageBase` requires `id`, `content`, `source` — an id is mandatory, so
+ *    one is minted here (dsh-llm's createUserMessage does the same with
+ *    `brandString(randomUUID())`).
+ *  - `ContextFormed` allows `form: 'recall'` but there is NO `'reminder'`; the
+ *    notice-shaped form is `{ form: 'notice', summary }`.
  */
 function buildUserMessage(text: string, form: 'recall' | 'reminder'): any {
+  const source =
+    form === 'recall'
+      ? { kind: 'plugin:dsh-memory-tree', form: 'recall' }
+      : {
+          kind: 'plugin:dsh-memory-tree',
+          form: 'notice',
+          summary: text.length <= 120 ? text : `${text.slice(0, 119)}…`,
+        }
   return {
+    id: randomUUID(),
     role: 'user',
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin:dsh-memory-tree', form },
+    source,
   }
 }
 
