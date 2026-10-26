@@ -17,7 +17,7 @@
   },
   "scripts": {
     "build": "tsc && npm run build:client",
-    "build:client": "esbuild src/client/index.tsx --bundle --format=iife --charset=utf8 --outfile=lib/client.js --banner:js=\"window.__ModuleLoader__.load({ id: 'dsh-memory-tree', factory: (require) => {\" --footer:js=\"}});\"",
+    "build:client": "esbuild src/client/index.tsx --bundle --format=cjs --charset=utf8 --outfile=lib/client.js --banner:js=\"window.__ModuleLoader__.load({ id: 'dsh-memory-tree', factory: (require) => { var module = { exports: {} }; var exports = module.exports; Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });\" --footer:js=\"return module.exports; }});\"",
     "prepare": "npm run build",
     "dev": "tsx watch src/index.ts",
     "typecheck": "tsc --noEmit",
