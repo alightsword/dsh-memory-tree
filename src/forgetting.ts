@@ -31,8 +31,9 @@ export function decayWeight(
   node: MemoryNode,
   nowMs: number,
   tier: MemoryConfig['forgetting_tier'],
+  customFactor = 0,
 ): number {
-  const F = FORGETTING_FACTOR[tier]
+  const F = customFactor > 0 ? customFactor : FORGETTING_FACTOR[tier]
   const t = Math.max(0, nowMs - node.updated_at)
   const R = Math.pow(1 + (F * t) / SCALE_S, -0.5)
   return R * node.base_weight
@@ -46,11 +47,16 @@ export async function runGovernance(deps: ForgettingDeps): Promise<void> {
   try {
     const nodes = await deps.store.readL3Nodes()
     const nowMs = Date.now()
-    const THRESHOLD = 0.15
+    const THRESHOLD = deps.config.archive_threshold
 
     for (const node of nodes) {
       if (node.status !== 'active' || node.source === 'confirmed') continue
-      const w = decayWeight(node, nowMs, deps.config.forgetting_tier)
+      const w = decayWeight(
+        node,
+        nowMs,
+        deps.config.forgetting_tier,
+        deps.config.forgetting_factor,
+      )
       if (w < THRESHOLD) {
         // Archive: mark superseded (no replacing node). Fail-open — just a status flip.
         node.status = 'superseded'

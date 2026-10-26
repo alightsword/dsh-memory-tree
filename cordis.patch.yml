@@ -1,3 +1,30 @@
+# dsh-memory-tree —— 跨会话三级记忆，写入前冲突拦截。
+#
+# ⚠️ 这个文件必须是**顶层 YAML 数组**，否则 loader 会直接抛错。
+#
+# `id` 同时也是设置项的命名空间。`name` 必须等于 package.json 的 name。
+# 所有选项都可以在下面 `config:` 里写，留空即用默认值。
+# 注意：patch 的 config 是整体替换、不深合并，覆写这一行时要写全想保留的键。
+
 - insert:
     - id: dsh-memory-tree
       name: dsh-memory-tree
+      config:
+        # 遗忘档位：gentle 慢 / normal 中 / aggressive 快。
+        forgetting_tier: normal
+        # 自定义遗忘因子（0 = 使用上面档位的预设值）。
+        forgetting_factor: 0
+        # 归档阈值：衰减后权重低于此值则归档（0~1）。
+        archive_threshold: 0.15
+        # pre-step 召回 top-K 条线索。
+        recall_top_k: 3
+        # 冻结快照注入预算（字符数），超出则截断。
+        snapshot_budget_chars: 2000
+        # 检测到冲突时是否向用户提问确认。
+        p1_question_enabled: true
+        # 冲突提问文案。
+        p1_question_copy: '检测到与新表达相矛盾的已有规矩，请确认是否替换/划分范围/拒绝：'
+        # 是否记录决策日志（decision_log.jsonl）。
+        logging_enabled: true
+        # 记忆存储目录。留空 = $DSH_HOME/memory-tree；想放同步盘就写绝对路径。
+        base_dir: ''

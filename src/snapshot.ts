@@ -10,9 +10,11 @@
  */
 
 import type { MemoryStore } from './store.js'
+import type { MemoryConfig } from './types.js'
 
 export interface SnapshotDeps {
   store: MemoryStore
+  config: MemoryConfig
   /** Whether the deployment:persona section has complete:true. */
   isCompleteMode: () => boolean
   /** Inject a systemPrompt section (text + order). */
@@ -35,7 +37,10 @@ export interface SkipResult {
   skipped_reason: 'complete_mode'
 }
 
-export async function buildSnapshot(store: MemoryStore): Promise<string> {
+export async function buildSnapshot(
+  store: MemoryStore,
+  budgetChars = 0,
+): Promise<string> {
   const root = await store.readRootMd()
   const actives = await store.readActiveRules()
 
@@ -53,7 +58,13 @@ export async function buildSnapshot(store: MemoryStore): Promise<string> {
   }
   lines.push('')
   lines.push(GENERIC_NOTICE)
-  return lines.join('\n')
+
+  let content = lines.join('\n')
+  if (budgetChars > 0 && content.length > budgetChars) {
+    // Keep the header + notice intact, truncate only the rules body.
+    content = content.slice(0, budgetChars) + '\n…(snapshot truncated by budget)'
+  }
+  return content
 }
 
 export async function runSnapshot(deps: SnapshotDeps): Promise<BuildResult | SkipResult> {
@@ -62,7 +73,7 @@ export async function runSnapshot(deps: SnapshotDeps): Promise<BuildResult | Ski
     return { content: null, skipped: true, skipped_reason: 'complete_mode' }
   }
 
-  const content = await buildSnapshot(deps.store)
+  const content = await buildSnapshot(deps.store, deps.config.snapshot_budget_chars)
   deps.injectSection(SNAPSHOT_SECTION_NAME, content, SNAPSHOT_SECTION_ORDER)
   await deps.log('snapshot_injected', { bytes: content.length })
   return { content, skipped: false }

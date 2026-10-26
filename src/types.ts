@@ -70,7 +70,7 @@ export interface CueIndex {
   cues: CueEntry[]
 }
 
-/** Plugin configuration, first version exposes four tunable groups. */
+/** Plugin configuration, tunable in cordis.patch.yml or the settings page. */
 export interface MemoryConfig {
   /** Forgetting profile: controls power-law decay aggressiveness. */
   forgetting_tier: 'gentle' | 'normal' | 'aggressive'
@@ -81,6 +81,14 @@ export interface MemoryConfig {
   logging_enabled: boolean
   /** Recall top-K. */
   recall_top_k: number
+  /** Snapshot injection budget: max chars of the frozen snapshot. */
+  snapshot_budget_chars: number
+  /** Archival threshold: nodes whose decayed weight drops below this are archived. */
+  archive_threshold: number
+  /** Base directory override (empty = $DSH_HOME/memory-tree). */
+  base_dir: string
+  /** Custom forgetting factor (0 = use tier preset). */
+  forgetting_factor: number
 }
 
 export const DEFAULT_CONFIG: MemoryConfig = {
@@ -89,6 +97,10 @@ export const DEFAULT_CONFIG: MemoryConfig = {
   p1_question_copy: '检测到与新表达相矛盾的已有规矩，请确认是否替换/划分范围/拒绝：',
   logging_enabled: true,
   recall_top_k: 3,
+  snapshot_budget_chars: 2000,
+  archive_threshold: 0.15,
+  base_dir: '',
+  forgetting_factor: 0,
 }
 
 /** Decision log entry, append-only. */

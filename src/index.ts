@@ -23,10 +23,13 @@ import { memoryReplaceTool } from './tools/memory_replace.js'
 import { memoryResolveTool } from './tools/memory_resolve.js'
 import { memoryRecallTool } from './tools/memory_recall.js'
 import { memoryShowTool } from './tools/memory_show.js'
+import { Config } from './config-schema.js'
 
 export const name = 'dsh-memory-tree'
 
 export const inject = ['tools', 'systemPrompt', 'agents', 'webServer']
+
+export { Config }
 
 /**
  * The persona PREFIX section carries `complete: true` when the deployment runs
@@ -42,7 +45,8 @@ export interface MemoryTreeConfig {
 
 export function apply(ctx: Context, rawConfig?: MemoryTreeConfig) {
   const config: MemoryConfig = { ...DEFAULT_CONFIG, ...(rawConfig?.config ?? {}) }
-  const store = new MemoryStore(resolveBaseDir(rawConfig?.baseDir))
+  const baseDir = config.base_dir || rawConfig?.baseDir || undefined
+  const store = new MemoryStore(resolveBaseDir(baseDir))
 
   ctx.effect(() => {
     void store.ensureSkeleton()
@@ -82,6 +86,7 @@ export function apply(ctx: Context, rawConfig?: MemoryTreeConfig) {
   // --- snapshot deps -------------------------------------------------------
   const snapshotDeps = {
     store,
+    config,
     isCompleteMode: () => {
       // complete:true lives on the persona PREFIX section, not on
       // `deployment:persona` (that name never exists — see
@@ -164,7 +169,7 @@ export function apply(ctx: Context, rawConfig?: MemoryTreeConfig) {
         rebuildSnapshot: async () => {
           if (!snapshotDeps.isCompleteMode()) {
             const { buildSnapshot } = await import('./snapshot.js')
-            const content = await buildSnapshot(store)
+            const content = await buildSnapshot(store, config.snapshot_budget_chars)
             snapshotDeps.injectSection(SNAPSHOT_SECTION_NAME, content, SNAPSHOT_SECTION_ORDER)
           }
         },

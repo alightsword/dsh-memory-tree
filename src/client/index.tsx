@@ -42,10 +42,14 @@ type ApiPayload = {
   }
   config: {
     forgetting_tier: string
+    forgetting_factor: number
+    archive_threshold: number
     p1_question_enabled: boolean
     p1_question_copy: string
     logging_enabled: boolean
     recall_top_k: number
+    snapshot_budget_chars: number
+    base_dir: string
   }
 }
 
@@ -87,8 +91,12 @@ function Panel() {
         ['L2 buffer', String(data.memory.buffer_count)],
         ['pending conflicts', String(data.memory.pending_conflicts)],
         ['forgetting_tier', data.config.forgetting_tier],
+        ['forgetting_factor', String(data.config.forgetting_factor)],
+        ['archive_threshold', String(data.config.archive_threshold)],
         ['recall_top_k', String(data.config.recall_top_k)],
-        ['logging_enabled', String(data.config.logging_enabled)],
+        ['snapshot 预算', String(data.config.snapshot_budget_chars)],
+        ['p1 提问', String(data.config.p1_question_enabled)],
+        ['日志', String(data.config.logging_enabled)],
       ]
     : []
 
