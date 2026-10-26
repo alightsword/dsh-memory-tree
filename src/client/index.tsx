@@ -112,12 +112,12 @@ function Icon(props: any) {
 function Section(props: { title: string; sub?: string; children: any }) {
   return React.createElement(
     'section',
-    { style: { marginTop: 22 } },
+    { style: { marginTop: 26 } },
     React.createElement(
       'h3',
-      { style: { margin: '0 0 10px', fontSize: 12, fontWeight: 600, letterSpacing: '0.06em', color: C.text2 } },
+      { style: { margin: '0 0 12px', fontSize: 15, fontWeight: 700, color: C.text1, letterSpacing: 0 } },
       props.title,
-      props.sub ? React.createElement('span', { style: { fontWeight: 400, letterSpacing: 0, marginLeft: 6 } }, props.sub) : null,
+      props.sub ? React.createElement('span', { style: { fontWeight: 400, fontSize: 12, color: C.text2, marginLeft: 8 } }, props.sub) : null,
     ),
     props.children,
   )
@@ -279,13 +279,17 @@ function Panel() {
 
   const count = activeNodes.length
   const days = data && data.first_seen ? Math.max(1, Math.ceil((Date.now() - data.first_seen) / 86400000)) : 1
-  const overview = data ? `本地存储 · ${count} 条 · 认识 ${days} 天` : ''
+  const pendingCount = pending.length
+  const overview = data
+    ? `本地存储 · ${count} 条` + (pendingCount > 0 ? ` · ${pendingCount} 条冲突待确认` : '') + ` · 认识 ${days} 天`
+    : ''
 
   return React.createElement(
     'div',
     { style: { display: 'flex', flexDirection: 'column', padding: '4px 2px', fontSize: 13, lineHeight: 1.55, color: C.text1 } },
 
-    // 概览行
+    // 大标题 + 概览（对齐肥鱼的「肥鱼日记 + 本地存储 · N 条」结构）
+    React.createElement('h2', { style: { margin: '0 0 6px', fontSize: 20, fontWeight: 700, color: C.text1 } }, '记忆树'),
     React.createElement('p', { style: { margin: 0, fontSize: 12, color: C.text2 } }, overview),
 
     // 自录入
