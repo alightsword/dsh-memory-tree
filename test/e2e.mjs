@@ -311,17 +311,30 @@ async function main() {
   assert(w < 1, 'decay reduces weight over time')
   assert(typeof w === 'number' && w > 0, 'decay weight is positive finite')
 
-  // 13. client half.
-  console.log('\n[13] client settings card')
-  const { renderSettingsCard } = await import('../lib/client/index.js')
-  const card = renderSettingsCard({
-    persona: { complete: false, mode: 'snapshot+recall' },
-    log: [],
-    memory: { active_rules: 2, active_facts: 0, superseded: 1, buffer_count: 0, pending_conflicts: 0 },
-    config: { forgetting_tier: 'normal', p1_question_enabled: true, p1_question_copy: 'x', logging_enabled: true, recall_top_k: 3 },
-  })
-  assert(card.blocks.length === 4, 'settings card has 4 blocks')
-  assert(card.blocks.map((b) => b.title).includes('人格状态'), 'persona block present')
+  // 13. client half (ModuleLoader bundle shape, aligned with dsh-meme).
+  console.log('\n[13] client bundle surface')
+  const clientSrc = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const captured = {}
+  const fakeRequire = (n) => {
+    if (n === 'react') return { createElement: (...a) => a }
+    throw new Error('unexpected require: ' + n)
+  }
+  const fakeDoc = { head: { appendChild() {} } }
+  const fakeLoader = {
+    load: (m) => {
+      captured.surface = m.factory(fakeRequire)
+    },
+  }
+  new Function('window', 'globalThis', 'document', clientSrc)(
+    { __ModuleLoader__: fakeLoader },
+    { __ModuleLoader__: fakeLoader },
+    fakeDoc,
+  )
+  assert(captured.surface && typeof captured.surface.apply === 'function', 'client exposes apply()')
+  assert(
+    Array.isArray(captured.surface.inject) && captured.surface.inject.includes('slots'),
+    'client inject declares slots service',
+  )
 
   // 14. conflict-detection edge cases (false-positive / false-negative guard).
   console.log('\n[14] conflict detection edge cases')
