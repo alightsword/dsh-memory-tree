@@ -16,6 +16,7 @@ declare const React: any
 
 export const inject = ['slots']
 
+// client-build marker v3 (feiyu-style panel; bump to force a DSH bundle re-read)
 const PANEL_ID = 'memory-tree'
 
 /** Theme tokens only — light/dark switch automatically. */
