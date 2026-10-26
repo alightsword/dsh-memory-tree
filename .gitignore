@@ -1,0 +1,7 @@
+node_modules/
+lib/
+*.log
+.dsh-memory-tree/
+.DS_Store
+*.bak
+*.bak.*
