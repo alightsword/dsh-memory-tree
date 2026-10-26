@@ -47,15 +47,15 @@
     "long-term-memory"
   ],
   "license": "MIT",
-  "author": "linksword239-dev",
+  "author": "alightsword",
   "repository": {
     "type": "git",
-    "url": "https://github.com/linksword239-dev/dsh-memory-tree.git"
+    "url": "https://github.com/alightsword/dsh-memory-tree.git"
   },
   "bugs": {
-    "url": "https://github.com/linksword239-dev/dsh-memory-tree/issues"
+    "url": "https://github.com/alightsword/dsh-memory-tree/issues"
   },
-  "homepage": "https://github.com/linksword239-dev/dsh-memory-tree#readme",
+  "homepage": "https://github.com/alightsword/dsh-memory-tree#readme",
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.5",
     "@deepseek-ai/dsh": ">=0.2.1-rc.3",
