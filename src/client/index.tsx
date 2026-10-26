@@ -1,14 +1,9 @@
 /**
- * dsh-memory-tree client half — sidebar panel (feiyu-memory style).
+ * dsh-memory-tree client half — sidebar panel (feiyu-memory visual clone).
  *
- * Two-slot sidebar panel (sidebar.panellist + main) showing the plugin's
- * three-tier memory. Visual language follows feiyu-memory:
- *   - one-line overview header ("本地存储 · N 条 · 认识 N 天");
- *   - card stream with relative timestamps, scope chips and in-place edit;
- *   - two-step inline delete confirm (忘掉 → 确定忘掉？/ 算了), no modal;
- *   - a manual note composer so users can add / edit memories themselves.
- * The layered identity is kept: L3 cards are the main stream, L2 conflicts
- * and the agent decision log render as dedicated sections below.
+ * Two-slot sidebar panel (sidebar.panellist + main). Visual language is a
+ * deliberate close copy of feiyu-memory: inline styles, theme tokens only,
+ * the same card / section / link-button / relative-time patterns.
  *
  * Client contract (verified against feiyu-memory + dsh-meme):
  *   - export `inject` array (here `['slots']`);
@@ -23,46 +18,19 @@ export const inject = ['slots']
 
 const PANEL_ID = 'memory-tree'
 
+/** Theme tokens only — light/dark switch automatically. */
 const C = {
+  bg: 'var(--dsw-alias-bg-base)',
   layer1: 'var(--dsw-alias-bg-layer-1)',
   layer2: 'var(--dsw-alias-bg-layer-2)',
-  border: 'var(--dsw-alias-border-l1)',
-  label: 'var(--dsw-alias-label-primary)',
-  label2: 'var(--dsw-alias-label-secondary)',
-  danger: 'var(--dsw-alias-status-danger, #d33)',
-  accent: 'var(--dsw-alias-brand-primary)',
+  border1: 'var(--dsw-alias-border-l1)',
+  border2: 'var(--dsw-alias-border-l2)',
+  text1: 'var(--dsw-alias-label-primary)',
+  text2: 'var(--dsw-alias-label-secondary)',
+  idle: 'var(--dsw-alias-state-idle-primary)',
+  err: 'var(--dsw-alias-state-error-primary)',
+  brand: 'var(--dsw-alias-brand-primary)',
 }
-
-const CSS = [
-  '.mtp{display:flex;flex-direction:column;gap:14px;padding:6px 2px;font-size:13px;color:' + C.label + ';line-height:1.55}',
-  '.mtp .mtp-ov{font-size:12px;color:' + C.label2 + '}',
-  '.mtp .mtp-sec{display:flex;flex-direction:column;gap:8px}',
-  '.mtp .mtp-head{font-size:13px;font-weight:600;color:' + C.label + '}',
-  '.mtp .mtp-sub{font-size:11px;font-weight:400;color:' + C.label2 + ';margin-left:6px}',
-  '.mtp .mtp-card{position:relative;display:flex;flex-direction:column;gap:4px;padding:8px 10px;background:' + C.layer1 + ';border:1px solid ' + C.border + ';border-radius:10px}',
-  '.mtp .mtp-meta{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11px;color:' + C.label2 + '}',
-  '.mtp .mtp-chip{padding:0 6px;border-radius:4px;background:' + C.layer2 + ';white-space:nowrap}',
-  '.mtp .mtp-chip.warn{color:' + C.danger + ';border:1px solid ' + C.danger + ';background:transparent}',
-  '.mtp .mtp-statement{white-space:pre-wrap;word-break:break-word}',
-  '.mtp .mtp-ops{display:flex;gap:8px;justify-content:flex-end;font-size:11px}',
-  '.mtp .mtp-link{background:none;border:none;padding:0;color:' + C.label2 + ';cursor:pointer;font-size:11px;text-decoration:underline}',
-  '.mtp .mtp-link:hover{color:' + C.label + '}',
-  '.mtp .mtp-link.danger{color:' + C.danger + '}',
-  '.mtp .mtp-confirm{display:flex;gap:10px;justify-content:flex-end;font-size:12px;color:' + C.label2 + ';margin-top:2px}',
-  '.mtp textarea.mtp-input{width:100%;box-sizing:border-box;min-height:56px;resize:vertical;background:' + C.layer1 + ';color:' + C.label + ';border:1px solid ' + C.border + ';border-radius:8px;padding:8px;font-size:13px;font-family:inherit;line-height:1.5}',
-  '.mtp textarea.mtp-input:focus{outline:none;border-color:' + C.accent + '}',
-  '.mtp .mtp-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}',
-  '.mtp .mtp-select,.mtp .mtp-scope{background:' + C.layer1 + ';color:' + C.label + ';border:1px solid ' + C.border + ';border-radius:6px;padding:3px 8px;font-size:12px}',
-  '.mtp .mtp-scope{flex:1;min-width:90px}',
-  '.mtp .mtp-add{border:1px solid ' + C.accent + ';color:' + C.accent + ';background:transparent;border-radius:6px;padding:3px 14px;cursor:pointer;font-size:12px}',
-  '.mtp .mtp-add:hover{background:' + C.layer2 + '}',
-  '.mtp .mtp-add:disabled{opacity:.5;cursor:default}',
-  '.mtp .mtp-err{color:' + C.danger + ';font-size:12px}',
-  '.mtp .mtp-empty{font-size:12px;color:' + C.label2 + ';font-style:italic}',
-  '.mtp .mtp-logline{display:flex;gap:8px;font-size:12px;color:' + C.label2 + ';border-bottom:1px dashed ' + C.border + ';padding:2px 0}',
-  '.mtp .mtp-logts{flex:none;opacity:.7}',
-  '.mtp .mtp-logbox{display:flex;flex-direction:column;gap:2px;max-height:200px;overflow:auto}',
-].join('\n')
 
 type NodeItem = {
   id: string
@@ -86,23 +54,41 @@ type StatePayload = {
     l2: { buffer: Array<{ id: string; statement: string; type: string }>; pending_conflicts: ConflictItem[] }
     l3: { nodes: NodeItem[] }
   }
-  log: Array<{ ts: number; event: string; detail?: unknown }>
+  log: Array<{ ts: number; event: string }>
   config: Record<string, unknown>
 }
 
 const BASE = '/dsh-memory-tree-api'
 
-function relTime(ts: number): string {
-  if (!ts) return ''
-  const diff = Date.now() - ts
-  const min = Math.floor(diff / 60000)
-  if (min < 1) return '刚刚'
-  if (min < 60) return `${min} 分钟前`
-  const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr} 小时前`
-  const day = Math.floor(hr / 24)
-  if (day === 1) return '昨天'
-  return `${day} 天前`
+/** 时间说人话：今天 / 昨天 / 3 天前 / 10-05 */
+function dayLabel(ts: number): string {
+  if (!Number.isFinite(ts)) return ''
+  const startOfDay = (t: number) => {
+    const d = new Date(t)
+    d.setHours(0, 0, 0, 0)
+    return d.getTime()
+  }
+  const days = Math.round((startOfDay(Date.now()) - startOfDay(ts)) / 86400000)
+  if (days <= 0) return '今天'
+  if (days === 1) return '昨天'
+  if (days < 7) return `${days} 天前`
+  const d = new Date(ts)
+  return `${d.getMonth() + 1}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function linkStyle(color: string): any {
+  return {
+    margin: 0,
+    padding: 0,
+    border: 0,
+    background: 'none',
+    color,
+    font: 'inherit',
+    fontSize: 12,
+    cursor: 'pointer',
+    textDecoration: 'underline',
+    textUnderlineOffset: 3,
+  }
 }
 
 function Icon(props: any) {
@@ -122,13 +108,44 @@ function Icon(props: any) {
   )
 }
 
-/** One L3 card: chips + statement + (edit in place) + two-step forget. */
-function NodeCard(props: { node: NodeItem; onDone: () => void; post: (path: string, body: any) => Promise<any>; setError: (s: string) => void }) {
+function Section(props: { title: string; sub?: string; children: any }) {
+  return React.createElement(
+    'section',
+    { style: { marginTop: 22 } },
+    React.createElement(
+      'h3',
+      { style: { margin: '0 0 10px', fontSize: 12, fontWeight: 600, letterSpacing: '0.06em', color: C.text2 } },
+      props.title,
+      props.sub ? React.createElement('span', { style: { fontWeight: 400, letterSpacing: 0, marginLeft: 6 } }, props.sub) : null,
+    ),
+    props.children,
+  )
+}
+
+function Empty(props: { text: string }) {
+  return React.createElement(
+    'p',
+    { style: { margin: 0, fontSize: 13, lineHeight: 1.7, color: C.text2 } },
+    props.text,
+  )
+}
+
+/** 一条 L3 记忆卡片（对齐 feiyu 的 Entry）。 */
+function NodeCard(props: {
+  node: NodeItem
+  onDone: () => void
+  post: (path: string, body: any) => Promise<any>
+  setError: (s: string) => void
+}) {
   const n = props.node
   const [confirming, setConfirming] = React.useState(false)
   const [editing, setEditing] = React.useState(false)
   const [draft, setDraft] = React.useState(n.statement)
   const [busy, setBusy] = React.useState(false)
+
+  const when = dayLabel(n.updated_at)
+  const tags = [n.type === 'rule' ? '规矩' : '事实']
+  if (n.scope) tags.push(n.scope)
 
   const doForget = () => {
     setBusy(true)
@@ -152,38 +169,52 @@ function NodeCard(props: { node: NodeItem; onDone: () => void; post: (path: stri
   }
 
   return React.createElement(
-    'div',
-    { className: 'mtp-card' },
+    'article',
+    { style: { position: 'relative', padding: '12px 14px', marginBottom: 8, borderRadius: 10, background: C.layer1, border: `1px solid ${C.border1}` } },
     React.createElement(
       'div',
-      { className: 'mtp-meta' },
-      React.createElement('span', null, relTime(n.updated_at)),
-      React.createElement('span', { className: 'mtp-chip' }, n.type === 'rule' ? '规矩' : '事实'),
-      n.scope ? React.createElement('span', { className: 'mtp-chip' }, n.scope) : null,
-      n.source === 'confirmed' ? React.createElement('span', { className: 'mtp-chip' }, '已确认') : null,
+      { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, fontSize: 11, color: C.text2 } },
+      React.createElement('span', null, when),
+      tags.length > 0 ? React.createElement('span', { style: { opacity: 0.6 } }, '·') : null,
+      React.createElement('span', null, tags.join(' · ')),
     ),
     editing
       ? React.createElement('textarea', {
-          className: 'mtp-input',
           value: draft,
           onChange: (e: any) => setDraft(e.target.value),
           autoFocus: true,
+          style: {
+            width: '100%', boxSizing: 'border-box', minHeight: 64, resize: 'vertical',
+            padding: '8px 10px', margin: 0, fontSize: 13, lineHeight: 1.6, fontFamily: 'inherit',
+            color: C.text1, background: C.bg, border: `1px solid ${C.border2}`, borderRadius: 8,
+          },
         })
-      : React.createElement('div', { className: 'mtp-statement' }, n.statement),
-    confirming
-      ? React.createElement(
-          'div',
-          { className: 'mtp-confirm' },
-          '确定忘掉？',
-          React.createElement('button', { className: 'mtp-link danger', disabled: busy, onClick: doForget }, busy ? '…' : '忘掉'),
-          React.createElement('button', { className: 'mtp-link', onClick: () => setConfirming(false) }, '算了'),
-        )
-      : React.createElement(
-          'div',
-          { className: 'mtp-ops' },
-          React.createElement('button', { className: 'mtp-link', onClick: () => setEditing((v) => !v) }, editing ? '收起' : '改'),
-          React.createElement('button', { className: 'mtp-link danger', onClick: () => setConfirming(true) }, '忘掉'),
-        ),
+      : React.createElement('p', { style: { margin: 0, fontSize: 13, lineHeight: 1.75, color: C.text1 } }, n.statement),
+    React.createElement(
+      'div',
+      { style: { marginTop: 8, display: 'flex', justifyContent: 'flex-end', gap: 12, alignItems: 'center' } },
+      confirming
+        ? React.createElement(
+            'span',
+            { style: { display: 'inline-flex', gap: 10, alignItems: 'center', fontSize: 12 } },
+            React.createElement('span', { style: { color: C.text2 } }, '确定忘掉？'),
+            React.createElement('button', { type: 'button', onClick: doForget, disabled: busy, style: linkStyle(C.err) }, busy ? '…' : '忘掉'),
+            React.createElement('button', { type: 'button', onClick: () => setConfirming(false), style: linkStyle(C.text2) }, '算了'),
+          )
+        : React.createElement(
+            React.Fragment,
+            null,
+            React.createElement('button', {
+              type: 'button', onClick: () => setEditing((v) => !v),
+              style: { ...linkStyle(C.text2), opacity: 0.75 },
+            }, editing ? '收起' : '改'),
+            React.createElement('button', {
+              type: 'button', onClick: () => setConfirming(true),
+              style: { ...linkStyle(C.text2), opacity: busy ? 0.5 : 0.75 },
+              disabled: Boolean(busy),
+            }, '忘掉'),
+          ),
+    ),
   )
 }
 
@@ -196,12 +227,15 @@ function Panel() {
   const [noteScope, setNoteScope] = React.useState('')
   const [noteBusy, setNoteBusy] = React.useState(false)
 
-  const post = React.useCallback((path: string, body: any) =>
-    fetch(BASE + path, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }).then((r) => r.json()), [])
+  const post = React.useCallback(
+    (path: string, body: any) =>
+      fetch(BASE + path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then((r) => r.json()),
+    [],
+  )
 
   const load = React.useCallback(() => {
     fetch(BASE + '/state', { cache: 'no-store' })
@@ -242,120 +276,121 @@ function Panel() {
   const pending = layers?.l2.pending_conflicts ?? []
   const log = data?.log ?? []
 
-  // Overview: count + days known.
-  let overview = ''
-  if (data) {
-    const count = activeNodes.length
-    const days = data.first_seen ? Math.max(1, Math.ceil((Date.now() - data.first_seen) / 86400000)) : 1
-    overview = `本地存储 · ${count} 条 · 认识 ${days} 天`
-  }
+  const count = activeNodes.length
+  const days = data && data.first_seen ? Math.max(1, Math.ceil((Date.now() - data.first_seen) / 86400000)) : 1
+  const overview = data ? `本地存储 · ${count} 条 · 认识 ${days} 天` : ''
 
   return React.createElement(
     'div',
-    { className: 'mtp' },
-    React.createElement('div', { className: 'mtp-ov' }, overview || (error ? '' : '加载中…')),
+    { style: { display: 'flex', flexDirection: 'column', padding: '4px 2px', fontSize: 13, lineHeight: 1.55, color: C.text1 } },
 
-    // --- 自录入 ---
+    // 概览行
+    React.createElement('p', { style: { margin: 0, fontSize: 12, color: C.text2 } }, overview),
+
+    // 自录入
     React.createElement(
-      'div',
-      { className: 'mtp-sec' },
-      React.createElement('div', { className: 'mtp-head' }, '手动记一条'),
+      Section,
+      { title: '手动记一条' },
       React.createElement('textarea', {
-        className: 'mtp-input',
         placeholder: '写一条要长期记住的事，例如：我不吃香菜',
         value: noteText,
         onChange: (e: any) => setNoteText(e.target.value),
+        style: {
+          width: '100%', boxSizing: 'border-box', minHeight: 60, resize: 'vertical',
+          padding: '8px 10px', marginBottom: 8, fontSize: 13, lineHeight: 1.6, fontFamily: 'inherit',
+          color: C.text1, background: C.layer1, border: `1px solid ${C.border1}`, borderRadius: 8,
+        },
       }),
       React.createElement(
         'div',
-        { className: 'mtp-row' },
-        React.createElement(
-          'select',
-          { className: 'mtp-select', value: noteType, onChange: (e: any) => setNoteType(e.target.value) },
+        { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+        React.createElement('select', {
+          value: noteType,
+          onChange: (e: any) => setNoteType(e.target.value),
+          style: { background: C.layer1, color: C.text1, border: `1px solid ${C.border1}`, borderRadius: 6, padding: '3px 8px', fontSize: 12 },
+        },
           React.createElement('option', { value: 'rule' }, '规矩'),
           React.createElement('option', { value: 'fact' }, '事实'),
         ),
         React.createElement('input', {
-          className: 'mtp-scope',
-          placeholder: 'scope（可选，如 qq 群）',
+          placeholder: 'scope（可选）',
           value: noteScope,
           onChange: (e: any) => setNoteScope(e.target.value),
+          style: { flex: 1, minWidth: 90, background: C.layer1, color: C.text1, border: `1px solid ${C.border1}`, borderRadius: 6, padding: '4px 8px', fontSize: 12 },
         }),
-        React.createElement('button', { className: 'mtp-add', disabled: noteBusy || !noteText.trim(), onClick: addNote }, noteBusy ? '…' : '记住'),
+        React.createElement('button', {
+          type: 'button',
+          onClick: addNote,
+          disabled: noteBusy || !noteText.trim(),
+          style: {
+            margin: 0, padding: '3px 14px', border: `1px solid ${C.brand}`, borderRadius: 6,
+            background: 'none', color: C.brand, fontSize: 12, cursor: 'pointer', opacity: noteBusy || !noteText.trim() ? 0.5 : 1,
+          },
+        }, noteBusy ? '…' : '记住'),
       ),
     ),
 
-    // --- 最近的事（L3 active 卡片流） ---
+    // L3 记下的事
     React.createElement(
-      'div',
-      { className: 'mtp-sec' },
-      React.createElement('div', { className: 'mtp-head' }, '记下的事', React.createElement('span', { className: 'mtp-sub' }, '长时记忆，改动会影响快照')),
+      Section,
+      { title: '记下的事', sub: '长时记忆' },
       activeNodes.length === 0
-        ? React.createElement('div', { className: 'mtp-empty' }, '还没有记住任何事')
+        ? React.createElement(Empty, { text: '还没有记住任何事' })
         : activeNodes.map((n) =>
             React.createElement(NodeCard, { key: n.id, node: n, onDone: refresh, post, setError }),
           ),
     ),
 
-    // --- L2 短时层 ---
-    (buffer.length > 0 || pending.length > 0)
+    // L2 短时与冲突
+    buffer.length > 0 || pending.length > 0
       ? React.createElement(
-          'div',
-          { className: 'mtp-sec' },
-          React.createElement('div', { className: 'mtp-head' }, '短时与冲突', React.createElement('span', { className: 'mtp-sub' }, 'L2 · 自动流转，无需手动管理')),
+          Section,
+          { title: '短时与冲突', sub: '自动流转' },
           buffer.map((b) =>
             React.createElement(
-              'div',
-              { className: 'mtp-card', key: b.id },
-              React.createElement('div', { className: 'mtp-statement' }, b.statement),
+              'article',
+              { key: b.id, style: { padding: '12px 14px', marginBottom: 8, borderRadius: 10, background: C.layer1, border: `1px solid ${C.border1}` } },
+              React.createElement('p', { style: { margin: 0, fontSize: 13, lineHeight: 1.75, color: C.text1 } }, b.statement),
             ),
           ),
           pending.map((c) =>
             React.createElement(
-              'div',
-              { className: 'mtp-card', key: c.conflict_id },
-              React.createElement(
-                'div',
-                { className: 'mtp-meta' },
-                React.createElement('span', { className: 'mtp-chip warn' }, '冲突待确认'),
-              ),
-              React.createElement('div', { className: 'mtp-statement' }, c.question),
+              'article',
+              { key: c.conflict_id, style: { padding: '12px 14px', marginBottom: 8, borderRadius: 10, background: C.layer1, border: `1px solid ${C.err}` } },
+              React.createElement('p', { style: { margin: 0, fontSize: 13, lineHeight: 1.75, color: C.text1 } }, c.question),
+              React.createElement('p', { style: { margin: '6px 0 0', fontSize: 11, color: C.err } }, '冲突待确认'),
             ),
           ),
         )
       : null,
 
-    // --- 决策日志 ---
+    // 决策日志
     React.createElement(
-      'div',
-      { className: 'mtp-sec' },
-      React.createElement('div', { className: 'mtp-head' }, '决策日志', React.createElement('span', { className: 'mtp-sub' }, 'agent 的记忆操作记录')),
+      Section,
+      { title: '决策日志', sub: '记忆操作记录' },
       log.length === 0
-        ? React.createElement('div', { className: 'mtp-empty' }, '（无记录）')
+        ? React.createElement(Empty, { text: '（无记录）' })
         : React.createElement(
             'div',
-            { className: 'mtp-logbox' },
+            { style: { display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 220, overflow: 'auto' } },
             log.slice(-50).reverse().map((l, i) =>
               React.createElement(
                 'div',
-                { className: 'mtp-logline', key: i },
-                React.createElement('span', { className: 'mtp-logts' }, relTime(l.ts)),
+                { key: i, style: { display: 'flex', gap: 8, fontSize: 12, color: C.text2, borderBottom: `1px dashed ${C.border1}`, padding: '2px 0' } },
+                React.createElement('span', { style: { flex: 'none', opacity: 0.7 } }, dayLabel(l.ts)),
                 React.createElement('span', null, l.event),
               ),
             ),
           ),
     ),
 
-    error ? React.createElement('div', { className: 'mtp-err' }, error) : null,
+    error
+      ? React.createElement('p', { style: { marginTop: 12, fontSize: 12, color: C.err } }, error)
+      : null,
   )
 }
 
 export function apply(ctx: any): void {
-  const styleEl = document.createElement('style')
-  styleEl.textContent = CSS
-  document.head.appendChild(styleEl)
-  ctx.effect(() => () => styleEl.remove(), 'dsh-memory-tree: styles')
-
   const slots = ctx.get('slots')
   if (!slots) return
 
