@@ -12,7 +12,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { MemoryStore } from '../store.js'
 import type { SemanticOppositionFn } from '../conflict.js'
 import { detectConflict } from '../conflict.js'
-import { makeNode, buildConflictQuestion, newId, json } from './helpers.js'
+import { makeNode, buildConflictQuestion, newId, json, lexicalOverlap } from './helpers.js'
 import type { ConflictCandidate, MemoryConfig } from '../types.js'
 
 export interface MemoryAddDeps {
@@ -71,7 +71,23 @@ export function memoryAddTool(deps: MemoryAddDeps) {
         return json({ status: 'ok', target: 'l2', node_id: node.id })
       }
 
-      // target === 'l3': conflict check.
+      // target === 'l3': de-duplication first, then conflict check.
+      // De-dup: reject a near-duplicate of an existing active statement (same
+      // meaning, different wording). Prevents "喜欢蓝色" and "喜欢蓝颜色"
+      // from both being stored.
+      const existingNodes = await store.readL3Nodes()
+      const duplicate = existingNodes.find(
+        (n) => n.status === 'active' && lexicalOverlap(n.statement, node.statement) >= 0.5,
+      )
+      if (duplicate) {
+        await log('memory_add_duplicate', { node_id: node.id, dup_of: duplicate.id })
+        return json({
+          status: 'duplicate',
+          dup_of: duplicate.id,
+          statement: duplicate.statement,
+        })
+      }
+
       const actives = await store.readActiveRules()
       const result = await detectConflict(node, actives, llmOpposition)
 

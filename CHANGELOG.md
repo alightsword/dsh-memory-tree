@@ -2,6 +2,58 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.4.2] - 2026-10-28
+
+### 修复
+
+- **面板 API 空响应**：上一版把 `webServer` 从顶层 `inject` 移除、改用 `ctx.inject(['webServer'], cb)`，但 cordis 的 `ctx.inject(deps, callback)` 语义是「callback 作为函数插件，首参是注入后的 Context、而非服务本身」——上一版误把首参当 webServer，导致面板 API 从未注册，前端报 `Failed to execute 'json' on 'Response'`。已修正：`webServer` 恢复为顶层 `inject`（桌面/web 宿主必提供），apply 内用 `ctx.webServer` 直接访问（对齐 dsh-web-app 与 feiyu-memory 的既有用法）；`llm` 仍走 `ctx.inject(['llm'], cb)` 可选注入，但回调正确从 `injectedCtx.get('llm')` 取服务。同时修正 e2e mock 的 `inject` 语义（回调首参为 Context），使测试与真实 cordis 一致。
+
+### 变更（面板 UI 打磨）
+
+- **深色主题可读性**：移除所有写死的 `#fff` 与「品牌色填充」，根节点、视图切换按钮等从「浅底浅字」改为「深底 + 品牌色边框 + 亮色文字」，全部文字/背景改用 `--dsw-alias-*` 主题 token，自动适配深/浅色主题。
+- **滚动**：树状视图加横向滚动（`overflowX: scroll`）+ 纵向滚动（`maxHeight: 420`）；Panel 最外层加 `height: 100%` + `overflowY: auto`，列表视图记忆卡片多时可滚到底。
+- **列表视图返回入口**：进入列表视图后顶部加「← 返回树状」按钮，点击叶子跳转后可一键回到树状图。
+- **叶子文字不再溢出**：节点宽度 120→132、高度 30→32，叶子截断 16→12 字，避免文字溢出卡片。
+
+## [0.4.1] - 2026-10-28
+
+### 修复
+
+- **可选服务导致 headless 不激活**：原 `inject` 把 `webServer` / `agents` / `llm` 声明为必选依赖，但 headless/CLI 环境没有 `webServer` 服务，导致整个插件停在 `pending (waiting for service: webServer)`，host 半边（记忆工具 + 冲突拦截）全部失效。已改为：顶层 `inject` 只保留 `['tools','systemPrompt']`，`llm` 与 `webServer` 改用 `ctx.inject(['llm'|'webServer'], cb)` 做可选注入——服务存在才执行对应逻辑，缺失时插件照常激活。实测 headless 环境 `[dsh-memory-tree] plugin loaded` 正常打印、无报错。
+
+### 变更
+
+- e2e 新增 [21] 可选服务降级场景（无 webServer 时工具仍注册、无面板路由），79 → 83 断言。
+
+## [0.4.0] - 2026-10-28
+
+### 新增
+
+- **记忆树状可视化**：侧边栏面板新增「树状 / 列表」视图切换。树状视图用纯 SVG 手绘四层结构（根「记忆树」→ 规矩/事实 → scope 分组 → 记忆节点），hover 叶子显示全文，点击叶子切换到列表并滚动定位到对应卡片。零第三方依赖（DSH 客户端插件禁止引入 d3/react-flow/echarts 等前端库，加载会空白 slot）。
+
+## [0.3.0] - 2026-10-28
+
+### 修复
+
+- **LLM 兜底死代码**：原 `llmOpposition` 调用 `ctx.llm.complete()`，但 DSH 的 `llm` 服务（`LlmRuntime`）根本没有 `complete` 方法，只有 `stream(options)`。该调用经 `(ctx as any)` 绕过类型检查且运行时永远走降级分支，等于死代码。已改为通过 `ctx.get('llm')` 获取真实服务，用 `stream()` 拼接文本做语义相反判断；`llm` 加入 `inject` 作为可选服务，缺失或调用失败时降级为纯规则检测（规则层仍是主路径）。
+
+### 新增
+
+- **记忆去重**：`memory_add(target:'l3')` 写入前做词法去重，与 active 节点重叠度 ≥ 0.5 时返回 `{ status: "duplicate", dup_of }`，不重复写入。
+- **L2 → L3 自动晋升**：新增 `promotion.ts`，在 `agent/turn-stopping` 时扫描 L2 buffer，把词法重叠 ≥ 0.6 且出现 ≥ 2 次的语句聚簇，走冲突检测后写入 L3（冲突则入 pending 队列）；晋升节点继承 buffer 原始 type（rule/fact）。fail-open。
+- **召回质量升级**：`extractCues` 改为停用词过滤 + 长 token 优先 + 去重；召回匹配从「子串包含」升级为「bigram Jaccard 重叠 + 精确子串加权」，能命中改写过的 cue。
+
+### 变更
+
+- `lexicalOverlap` 提取为 `tools/helpers.ts` 共享工具，conflict / promotion / de-dup 三处复用，消除重复实现。
+- `inject` 从 `['tools','systemPrompt','agents','webServer']` 增为含 `'llm'`（可选）。
+- 清理 `src/` 与根目录下 40+ 个 `.bak` 残留文件（Editor 工具产生，未被 git 跟踪）。
+- README 修正陈旧描述：版本号统一为 `0.2.1-rc.3`、断言数 52 → 69、LLM 兜底说明改为真实 `stream()` API，补充去重与晋升两节。
+
+### 测试
+
+- e2e 新增 4 组场景：去重、L2→L3 晋升、cue 提取、LLM 兜底（真实 stream 链路），69 → 79 断言。
+
 ## [0.2.1] - 2026-10-26
 
 ### 新增

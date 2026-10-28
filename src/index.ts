@@ -15,7 +15,7 @@ import { DEFAULT_CONFIG } from './types.js'
 import { MemoryStore, resolveBaseDir } from './store.js'
 import { detectConflict } from './conflict.js'
 import { runSnapshot, SNAPSHOT_SECTION_NAME, SNAPSHOT_SECTION_ORDER } from './snapshot.js'
-import { runRecall } from './recall.js'
+import { runRecall, extractCues } from './recall.js'
 import { runGovernance, decayWeight } from './forgetting.js'
 import { createLifecycle } from './lifecycle.js'
 import { memoryAddTool } from './tools/memory_add.js'
@@ -27,7 +27,11 @@ import { Config } from './config-schema.js'
 
 export const name = 'dsh-memory-tree'
 
-export const inject = ['tools', 'systemPrompt', 'agents', 'webServer']
+// Host-half hard dependencies. `webServer` is required because the client panel
+// (the plugin's primary UI) reads memory state over it; the desktop/web harness
+// always provides it. `llm` is resolved optionally via ctx.inject for the
+// low-confidence conflict fallback. `agents` was never actually consumed.
+export const inject = ['tools', 'systemPrompt', 'webServer']
 
 export { Config }
 
@@ -62,16 +66,79 @@ export function apply(ctx: Context, rawConfig?: MemoryTreeConfig) {
     }
   }
 
+  // --- llm fallback (low-confidence conflict band) -------------------------
+  // The `llm` service (LlmRuntime) exposes NO `complete` convenience method —
+  // only `stream(options)` over an AsyncIterable<StreamChunk>. It is OPTIONAL:
+  // resolved through `ctx.inject(['llm'], ...)` so a profile without it (e.g.
+  // headless) still activates the plugin and simply runs the rule-first
+  // detector. We resolve a usable provider/model and join text deltas ourselves;
+  // every step is defensive — a missing service, no provider, or a failed call
+  // returns false and lets the rule-first verdict stand.
+  //
+  // NOTE: cordis `ctx.inject(deps, callback)` calls the callback as a function
+  // plugin `(ctx, config)` — the FIRST argument is the injected Context, NOT the
+  // service. Resolve the service from that context with `.get()`.
+  let llmService: any = null
+  ctx.inject(['llm'], (injectedCtx: any) => {
+    try {
+      llmService = injectedCtx?.get?.('llm') ?? injectedCtx?.llm ?? null
+    } catch {
+      llmService = null
+    }
+  })
+
   const llmOpposition = async (candidate: string, existing: string): Promise<boolean> => {
     try {
-      const llm = (ctx as any).llm
-      if (!llm?.complete) return false
-      const out = await llm.complete(
-        '你是一个记忆冲突检测器。判断下面两条表达在语义上是否相反（互相矛盾）。' +
-          '只回答 true 或 false。\n' +
-          `A: ${candidate}\nB: ${existing}`,
-      )
-      const text = String(out).trim().toLowerCase()
+      const llm = llmService
+      if (!llm || typeof llm.stream !== 'function') return false
+
+      // Pick the first provider with a discoverable model list. DeepSeek's
+      // harness ships at least one default provider; fall back to 'deepseek'.
+      const providers: string[] = Array.isArray(llm.listProviders?.())
+        ? (llm.listProviders() as any[]).map((p: any) => p?.id ?? p?.name).filter(Boolean)
+        : ['deepseek']
+      if (providers.length === 0) providers.push('deepseek')
+
+      let provider = providers[0]
+      let model = ''
+      for (const p of providers) {
+        try {
+          const models = (await llm.listModels?.(p)) ?? []
+          if (Array.isArray(models) && models.length > 0) {
+            provider = p
+            model = models[0]?.id ?? models[0]?.model ?? ''
+            break
+          }
+        } catch {
+          /* try next provider */
+        }
+      }
+      if (!provider || !model) return false
+
+      const messages = [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text:
+                '你是一个记忆冲突检测器。判断下面两条表达在语义上是否相反（互相矛盾）。' +
+                '只回答 true 或 false。\n' +
+                `A: ${candidate}\nB: ${existing}`,
+            },
+          ],
+        },
+      ]
+
+      let out = ''
+      for await (const chunk of llm.stream({ provider, model, messages })) {
+        if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') {
+          out += chunk.text
+        } else if (chunk?.type === 'text' && typeof chunk.text === 'string') {
+          out += chunk.text
+        }
+      }
+      const text = out.trim().toLowerCase()
       return text.startsWith('true') || text.includes('是') || text === '1'
     } catch {
       return false
@@ -130,17 +197,15 @@ export function apply(ctx: Context, rawConfig?: MemoryTreeConfig) {
   const recallDeps = {
     store,
     config,
-    extractCues: (message: string): string[] => {
-      const tokens = message
-        .split(/[\s，。！？、,.!?;；:：]+/)
-        .filter((t) => t.length >= 2)
-      return tokens.slice(0, 5)
-    },
+    extractCues,
     log,
   }
 
   // --- governance deps -----------------------------------------------------
   const governanceDeps = { store, config, log }
+
+  // --- promotion deps ------------------------------------------------------
+  const promotionDeps = { store, config, llmOpposition, log }
 
   const lifecycle = createLifecycle({
     store,
@@ -148,6 +213,7 @@ export function apply(ctx: Context, rawConfig?: MemoryTreeConfig) {
     snapshot: snapshotDeps,
     recall: recallDeps,
     governance: governanceDeps,
+    promotion: promotionDeps,
   })
 
   // --- register tools ------------------------------------------------------
@@ -230,9 +296,14 @@ export function apply(ctx: Context, rawConfig?: MemoryTreeConfig) {
   // --- panel API for the client half ---------------------------------------
   // The client (browser) cannot read the filesystem; expose the layered
   // memory state + log over the host webServer (same pattern as feiyu-memory's
-  // /feiyu-diary and dsh-meme's /dsh-memes-api).
-  const webServer = (ctx as any).webServer ?? (ctx as any).get?.('webServer')
-  if (webServer?.register) {
+  // /feiyu-diary and dsh-meme's /dsh-memes-api). webServer is declared in
+  // `inject`, so it is available directly on the context (ctx.webServer) in the
+  // desktop/web harness.
+  {
+    const webServer = (ctx as any).webServer ?? (ctx as any).get?.('webServer')
+    if (!webServer?.register) {
+      // Web-server-less profile (headless): skip panel API, host half still works.
+    } else {
     const reply = (res: any, obj: unknown, status = 200) => {
       res.writeHead(status, {
         'Content-Type': 'application/json; charset=utf-8',
@@ -398,6 +469,7 @@ export function apply(ctx: Context, rawConfig?: MemoryTreeConfig) {
       },
       'dsh-memory-tree-api',
     )
+    }
   }
 
   // eslint-disable-next-line no-console

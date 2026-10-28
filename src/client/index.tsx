@@ -14,6 +14,8 @@
 
 declare const React: any
 
+import { MemoryTree } from './tree'
+
 export const inject = ['slots']
 
 // client-build marker v3 (feiyu-style panel; bump to force a DSH bundle re-read)
@@ -89,6 +91,23 @@ function linkStyle(color: string): any {
     cursor: 'pointer',
     textDecoration: 'underline',
     textUnderlineOffset: 3,
+  }
+}
+
+function viewToggleStyle(active: boolean): any {
+  return {
+    margin: 0,
+    padding: '3px 14px',
+    border: `1px solid ${active ? C.brand : C.border1}`,
+    borderRadius: 6,
+    // Never use a brand fill: brand-primary resolves light in dark theme, which
+    // would put light text on a light button. Use a dark surface + brand border
+    // for the active state instead.
+    background: active ? C.layer1 : 'none',
+    color: active ? C.text1 : C.text2,
+    fontSize: 12,
+    fontWeight: active ? 600 : 400,
+    cursor: 'pointer',
   }
 }
 
@@ -171,7 +190,7 @@ function NodeCard(props: {
 
   return React.createElement(
     'article',
-    { style: { position: 'relative', padding: '12px 14px', marginBottom: 8, borderRadius: 10, background: C.layer1, border: `1px solid ${C.border1}` } },
+    { id: 'mem-node-' + n.id, style: { position: 'relative', padding: '12px 14px', marginBottom: 8, borderRadius: 10, background: C.layer1, border: `1px solid ${C.border1}` } },
     React.createElement(
       'div',
       { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, fontSize: 11, color: C.text2 } },
@@ -227,6 +246,18 @@ function Panel() {
   const [noteType, setNoteType] = React.useState('rule')
   const [noteScope, setNoteScope] = React.useState('')
   const [noteBusy, setNoteBusy] = React.useState(false)
+  const [view, setView] = React.useState<'list' | 'tree'>('tree')
+  const [focusId, setFocusId] = React.useState<string | null>(null)
+
+  const focusNode = React.useCallback((nodeId: string) => {
+    // Switch to list view and scroll to the matching card.
+    setView('list')
+    setFocusId(nodeId)
+    setTimeout(() => {
+      const el = document.getElementById('mem-node-' + nodeId)
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 50)
+  }, [])
 
   const post = React.useCallback(
     (path: string, body: any) =>
@@ -286,14 +317,83 @@ function Panel() {
 
   return React.createElement(
     'div',
-    { style: { display: 'flex', flexDirection: 'column', padding: '4px 2px', fontSize: 13, lineHeight: 1.55, color: C.text1 } },
+    {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        padding: '4px 2px',
+        fontSize: 13,
+        lineHeight: 1.55,
+        color: C.text1,
+        // The sidebar `main` slot does not scroll by itself; make the panel
+        // scrollable so long lists (and the tree) are fully reachable.
+        height: '100%',
+        overflowY: 'auto',
+        boxSizing: 'border-box',
+      },
+    },
 
     // 大标题 + 概览（对齐肥鱼的「肥鱼日记 + 本地存储 · N 条」结构）
     React.createElement('h2', { style: { margin: '0 0 6px', fontSize: 20, fontWeight: 700, color: C.text1 } }, '记忆树'),
     React.createElement('p', { style: { margin: 0, fontSize: 12, color: C.text2 } }, overview),
 
-    // 自录入
+    // 视图切换：树状 / 列表
     React.createElement(
+      'div',
+      { style: { display: 'flex', gap: 6, margin: '14px 0 6px' } },
+      React.createElement(
+        'button',
+        {
+          type: 'button',
+          onClick: () => setView('tree'),
+          style: viewToggleStyle(view === 'tree'),
+        },
+        '树状',
+      ),
+      React.createElement(
+        'button',
+        {
+          type: 'button',
+          onClick: () => setView('list'),
+          style: viewToggleStyle(view === 'list'),
+        },
+        '列表',
+      ),
+    ),
+
+    // 树状视图（默认）
+    view === 'tree'
+      ? React.createElement(MemoryTree, { nodes: layers?.l3.nodes ?? [], onFocus: focusNode })
+      : null,
+
+    // 列表视图：顶部加"返回树状"入口（点击叶子跳转后，用户需要能回去）
+    view === 'list'
+      ? React.createElement(
+          'button',
+          {
+            type: 'button',
+            onClick: () => setView('tree'),
+            style: {
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              margin: '2px 0 14px',
+              padding: '5px 12px',
+              border: `1px solid ${C.border1}`,
+              borderRadius: 6,
+              background: C.layer1,
+              color: C.text1,
+              fontSize: 12,
+              cursor: 'pointer',
+            },
+          },
+          '← 返回树状',
+        )
+      : null,
+
+    // 自录入
+    view === 'list'
+      ? React.createElement(
       Section,
       { title: '手动记一条' },
       React.createElement('textarea', {
@@ -333,10 +433,11 @@ function Panel() {
           },
         }, noteBusy ? '…' : '记住'),
       ),
-    ),
+    ) : null,
 
     // L3 记下的事
-    React.createElement(
+    view === 'list'
+      ? React.createElement(
       Section,
       { title: '记下的事', sub: '长时记忆' },
       activeNodes.length === 0
@@ -344,10 +445,10 @@ function Panel() {
         : activeNodes.map((n) =>
             React.createElement(NodeCard, { key: n.id, node: n, onDone: refresh, post, setError }),
           ),
-    ),
+    ) : null,
 
     // L2 短时与冲突
-    buffer.length > 0 || pending.length > 0
+    view === 'list' && (buffer.length > 0 || pending.length > 0)
       ? React.createElement(
           Section,
           { title: '短时与冲突', sub: '自动流转' },

@@ -6,9 +6,9 @@ DSH 原生插件，给模型加**跨会话三级记忆**（瞬时 L1 / 短时 L2
 
 ## 真实 API 校准说明
 
-需求文档写的是概念接口，实际 `0.2.1-rc.2` 的 API 跟它有几处对不上，实现已经按真实 API 校准：
+需求文档写的是概念接口，实际 `0.2.1-rc.3` 的 API 跟它有几处对不上，实现已经按真实 API 校准：
 
-| 需求文档描述 | 真实 API（0.2.1-rc.2） |
+| 需求文档描述 | 真实 API（0.2.1-rc.3） |
 |--------------|------------------------|
 | `ctx.systemPrompt.section({ name, order: 50 })` | `section({ name, order, text, complete? })`，内容字段是 `text`，且 `complete` 是 section 级字段 |
 | `complete: true` 检测 | 检查名为 `deployment:persona` 的 section，常量 `PERSONA_SECTION`，取它的 `complete` 字段 |
@@ -19,7 +19,7 @@ DSH 原生插件，给模型加**跨会话三级记忆**（瞬时 L1 / 短时 L2
 
 ### Client 半边（浏览器）
 
-client 是一个**侧边栏面板**（与 feiyu-memory 同款双 slot 结构），展示插件的三层记忆 + agent 决策日志，并支持删除节点。实际踩坑后确认的硬性约定：
+client 是一个**侧边栏面板**（与 feiyu-memory 同款双 slot 结构），展示插件的三层记忆 + agent 决策日志，并支持删除节点。面板内置**列表 / 树状两种视图**：树状视图用纯 SVG 手绘（根「记忆树」→ 规矩/事实 → scope 分组 → 记忆节点四层），hover 显示全文、点击叶子跳转到对应卡片。实际踩坑后确认的硬性约定：
 
 | 约定 | 说明 |
 |------|------|
@@ -95,9 +95,11 @@ dsh-memory-tree/
 │   ├── recall.ts             # pre-step 召回 + 冲突 reminder
 │   ├── conflict.ts           # scope 重叠 + 语义相反检测，写入路径拦截
 │   ├── forgetting.ts         # 幂律衰减 + 归档，fail-open
+│   ├── promotion.ts          # L2 → L3 自动晋升（重复强化），冲突检测后写入
 │   ├── store.ts              # 文件系统持久化层
 │   ├── types.ts              # 共享类型 + 默认配置
 │   ├── client/index.tsx      # 侧边栏面板（分层视图 + 日志 + 自录入/编辑/删除）
+│   ├── client/tree.tsx       # 纯 SVG 记忆树状图（无第三方依赖）
 │   └── tools/
 │       ├── memory_add.ts
 │       ├── memory_replace.ts
@@ -122,8 +124,16 @@ dsh-memory-tree/
 
 - **规则层**，零成本：否定词表（不要/禁止/严禁/never/must not…）+ 反义 token 对（喜欢↔讨厌、深色↔浅色、开启↔关闭…）+ 词法重叠度（Jaccard over CJK bigram + latin token）。高置信度直接判。
   - 单字「不」按「不 + 动词/形容词」识别为否定，但「不错/不得不/不明/不仅」等固定非否定词进黑名单，避免误报。
-- **LLM 兜底**：规则信号落在低置信度区间，也就是有反义词但内容重叠薄，调 `ctx.llm.complete` 做一次轻量语义相反判断。
+- **LLM 兜底**：规则信号落在低置信度区间，也就是有反义词但内容重叠薄，通过 `llm` 服务的 `stream()` 做一次轻量语义相反判断。`llm` 是可选服务，profile 没有它或调用失败时降级为纯规则检测（规则层仍是主路径）。
 - **scope 重叠**：任一 scope 为空视为全域重叠，否则取交集。
+
+## 记忆去重
+
+`memory_add(target:'l3')` 写入前先做词法去重：新表达与任一 active 节点的词法重叠度 ≥ 0.85 时，判定为语义重复，返回 `{ status: "duplicate", dup_of }`，不重复写入。避免「喜欢蓝色」和「喜欢蓝颜色」同时占据两条 L3 记录。
+
+## L2 → L3 自动晋升
+
+短时层（L2 buffer）里反复出现、被强化的内容会自动晋升为长时记忆。`promotion.ts` 在每个 turn 结束时（`agent/turn-stopping`）扫描 buffer，把词法重叠度 ≥ 0.6 且出现 ≥ 2 次的语句聚簇，通过正常的冲突检测路径写入 L3；若与现有规矩冲突，仍走 pending_conflict 队列，不绕过拦截。晋升是 fail-open，出错只记日志、不阻塞对话。
 
 ## 幂律遗忘
 
@@ -143,7 +153,7 @@ npm run build
 # 类型检查
 npm run typecheck
 
-# 端到端测试（mock DSH Context 真实调用 apply，14 组场景 52 断言）
+# 端到端测试（mock DSH Context 真实调用 apply，16 组场景 69 断言）
 npm test
 
 # 安装到测试 profile（桌面端 profile 由 Electron 独占管理，须在应用内或手动装）

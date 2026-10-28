@@ -35,12 +35,37 @@ function assert(cond, label) {
 //     every assemble(), so the mock resolves functions lazily.
 //   * The lifecycle event is `agent/created` (serial, payload {agent, source});
 //     rc.3 never emits `agent/session-start`.
-function makeMockContext({ completeMode = false } = {}) {
+function makeMockContext({ completeMode = false, withWebServer = true, withLlm = true } = {}) {
   const tools = new Map()
   const handlers = {}
   const injectedSections = []
   const llmCalls = []
   const routes = new Map()
+
+  const llmService = {
+    complete(prompt) {
+      llmCalls.push(prompt)
+      // Mock LLM opposition: answer false (no opposition) by default.
+      return 'false'
+    },
+    // Real LlmRuntime surface: stream() over AsyncIterable<StreamChunk>, plus
+    // listProviders/listModels for provider/model discovery.
+    listProviders() {
+      return [{ id: 'deepseek', name: 'deepseek' }]
+    },
+    listModels() {
+      return [{ id: 'deepseek-chat', model: 'deepseek-chat' }]
+    },
+    stream({ messages }) {
+      // Echo a text-delta stream; derive a boolean answer from the prompt so
+      // tests can exercise the LLM fallback path deterministically.
+      return (async function* () {
+        const prompt = messages?.[0]?.content?.[0]?.text ?? ''
+        const opposed = prompt.includes('相反') && prompt.includes('讨厌')
+        yield { type: 'text-delta', text: opposed ? 'true' : 'false' }
+      })()
+    },
+  }
 
   const ctx = {
     effect(fn) {
@@ -52,6 +77,34 @@ function makeMockContext({ completeMode = false } = {}) {
     },
     emit(event, payload) {
       for (const h of handlers[event] ?? []) h(payload)
+    },
+    get(name) {
+      // The container's service lookup: mirror cordis's ctx.get('llm').
+      if (name === 'llm') return llmService
+      if (name === 'slots') return undefined
+      return undefined
+    },
+    inject(deps, callback) {
+      // cordis ctx.inject(deps, cb): cb is a function plugin called `(ctx, config)`.
+      // The first arg is an injected Context, NOT the service. Mirror that: build
+      // a context exposing the requested services via `.get()` and pass it in.
+      const list = Array.isArray(deps) ? deps : Object.keys(deps ?? {})
+      const services = {
+        llm: llmService,
+        webServer: ctx.webServer,
+      }
+      const injectedCtx = {
+        get(name) {
+          return services[name]
+        },
+        ...services,
+      }
+      // Only call back when every requested dependency is available.
+      const allAvailable = list.every((d) => services[d] !== undefined)
+      if (allAvailable) {
+        callback(injectedCtx, {})
+      }
+      return () => {}
     },
     tools: {
       register(def) {
@@ -80,22 +133,19 @@ function makeMockContext({ completeMode = false } = {}) {
         },
       },
     },
-    llm: {
-      complete(prompt) {
-        llmCalls.push(prompt)
-        // Mock LLM opposition: answer false (no opposition) by default.
-        return 'false'
-      },
-    },
+    llm: llmService,
     agents: {},
   }
   // Mock webServer: capture registered routes so panel API handlers can be
-  // driven directly (req is a stream, res collects writes).
-  ctx.webServer = {
-    register(def) {
-      routes.set(def.path, def.handler)
-      return () => routes.delete(def.path)
-    },
+  // driven directly (req is a stream, res collects writes). Omitted (withWebServer
+  // false) to exercise the optional-service path where the plugin still activates.
+  if (withWebServer) {
+    ctx.webServer = {
+      register(def) {
+        routes.set(def.path, def.handler)
+        return () => routes.delete(def.path)
+      },
+    }
   }
   return { ctx, tools, handlers, injectedSections, llmCalls, routes }
 }
@@ -439,6 +489,69 @@ async function main() {
   assert(stateRes.status === 200 && stateRes.json.ok, 'state returns ok')
   assert(Array.isArray(stateRes.json.layers?.l3?.nodes), 'state exposes layered l3 nodes')
   assert(typeof stateRes.json.first_seen === 'number', 'state exposes first_seen')
+
+  // 17. memory de-duplication (near-duplicate L3 write is rejected).
+  console.log('\n[17] memory de-duplication')
+  const addDedupA = await tools.get('memory_add').execute({ statement: '用户喜欢蓝色', target: 'l3', type: 'fact' })
+  assert(addDedupA.status === 'ok', 'first statement added')
+  const addDedupB = await tools.get('memory_add').execute({ statement: '用户喜欢蓝颜色', target: 'l3', type: 'fact' })
+  assert(addDedupB.status === 'duplicate', 'near-duplicate returns duplicate')
+  assert(typeof addDedupB.dup_of === 'string', 'duplicate carries dup_of id')
+
+  // 18. L2 → L3 automatic promotion (repeated buffer entries).
+  console.log('\n[18] L2 → L3 promotion')
+  await tools.get('memory_add').execute({ statement: '用户是前端工程师', target: 'l2', type: 'fact' })
+  await tools.get('memory_add').execute({ statement: '用户是前端工程师', target: 'l2', type: 'fact' })
+  const flush = handlers['agent/turn-stopping']?.[0]
+  assert(!!flush, 'turn-stopping handler registered')
+  await flush({})
+  // onFlush is fire-and-forget (`void lifecycle.onFlush()`); give the async
+  // ensureSkeleton + runPromotion chain a tick to settle before asserting.
+  await new Promise((r) => setTimeout(r, 30))
+  const showAfterPromo = await tools.get('memory_show').execute({})
+  assert(
+    showAfterPromo.active_facts.some((n) => n.statement.includes('前端工程师')),
+    'repeated L2 entry promoted to L3',
+  )
+
+  // 19. cue extraction (shared, stop-word aware).
+  console.log('\n[19] cue extraction')
+  const { extractCues } = await import('../lib/recall.js')
+  const cues1 = extractCues('请帮我把主题换成深色模式')
+  assert(Array.isArray(cues1) && cues1.length > 0, 'extractCues returns cues')
+  assert(cues1.some((c) => c.includes('深色') || c.includes('主题')), 'extractCues keeps meaningful tokens')
+
+  // 20. llm fallback via real stream() surface (opposition detected).
+  console.log('\n[20] llm fallback via stream()')
+  const { detectConflict: detect20 } = await import('../lib/conflict.js')
+  // Opposite-pair hit with ZERO lexical overlap forces the rule layer to hand
+  // off (return null), which is exactly when the LLM fallback fires. Stub the
+  // LLM to answer "opposed" and assert the conflict is recorded as llm-detected.
+  const llmResult = await detect20(
+    { id: 'c20', statement: '倾向甲', type: 'rule' },
+    [{ id: 'e20', statement: '排斥乙', type: 'rule' }],
+    async () => true, // stub LLM says "opposed"
+  )
+  assert(llmResult.conflict === true, 'LLM fallback (stubbed true) flags opposition')
+  assert(llmResult.detector === 'llm', 'detector recorded as llm')
+  // And with the stub saying "not opposed", the same pair must NOT conflict.
+  const llmResult2 = await detect20(
+    { id: 'c21', statement: '倾向甲', type: 'rule' },
+    [{ id: 'e21', statement: '排斥乙', type: 'rule' }],
+    async () => false,
+  )
+  assert(llmResult2.conflict === false, 'LLM fallback (stubbed false) clears opposition')
+
+  // 21. optional-service degradation: no webServer → plugin still activates.
+  console.log('\n[21] optional webServer (headless) still activates')
+  const bare = makeMockContext({ withWebServer: false })
+  apply(bare.ctx, { baseDir, config: { logging_enabled: true } })
+  // The memory tools must register even without webServer (host half works).
+  assert(bare.tools.has('memory_add'), 'memory_add registered without webServer')
+  assert(bare.tools.has('memory_show'), 'memory_show registered without webServer')
+  assert(bare.tools.has('memory_resolve'), 'memory_resolve registered without webServer')
+  // No panel routes should exist (webServer absent).
+  assert(bare.routes.size === 0, 'no panel routes without webServer')
 
   // summary
   console.log(`\n=============================`)

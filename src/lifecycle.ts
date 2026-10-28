@@ -17,6 +17,7 @@ import type { MemoryConfig } from './types.js'
 import { runSnapshot } from './snapshot.js'
 import { runRecall, type RecallOutput } from './recall.js'
 import { runGovernance } from './forgetting.js'
+import { runPromotion } from './promotion.js'
 
 export interface LifecycleDeps {
   store: MemoryStore
@@ -24,6 +25,7 @@ export interface LifecycleDeps {
   snapshot: Parameters<typeof runSnapshot>[0]
   recall: Parameters<typeof runRecall>[0]
   governance: Parameters<typeof runGovernance>[0]
+  promotion: Parameters<typeof runPromotion>[0]
 }
 
 export interface LifecycleHooks {
@@ -51,6 +53,7 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleHooks {
     async onFlush() {
       try {
         await deps.store.ensureSkeleton()
+        await runPromotion(deps.promotion)
       } catch (err) {
         await deps.snapshot.log('session_flush_error', { error: String(err) })
       }

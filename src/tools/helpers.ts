@@ -10,6 +10,27 @@ export function newId(prefix: string): string {
 }
 
 /**
+ * Lexical overlap (Jaccard over CJK bigrams + latin tokens). Shared by conflict
+ * detection, recall matching, promotion clustering, and memory de-duplication.
+ */
+export function lexicalOverlap(a: string, b: string): number {
+  const tokenize = (s: string): Set<string> => {
+    const out = new Set<string>()
+    const latin = s.toLowerCase().match(/[a-z0-9_]+/g) ?? []
+    for (const t of latin) out.add('w:' + t)
+    const cjk = s.replace(/[\s\p{P}\p{S}]/gu, '')
+    for (let i = 0; i < cjk.length - 1; i++) out.add('c:' + cjk.slice(i, i + 2))
+    return out
+  }
+  const A = tokenize(a)
+  const B = tokenize(b)
+  if (A.size === 0 || B.size === 0) return 0
+  let inter = 0
+  for (const x of A) if (B.has(x)) inter++
+  return inter / (A.size + B.size - inter)
+}
+
+/**
  * Normalize a value into a JSON-safe object for tool outputs. Strips
  * `undefined` fields and coerces internal objects (e.g. MemoryNode) into plain
  * JSON objects, satisfying dsh-tools' strict `execute(): Promise<JsonValue>`.
